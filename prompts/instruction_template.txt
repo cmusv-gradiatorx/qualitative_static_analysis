@@ -1,0 +1,9 @@
+Please provide:
+1. **Overall Assessment**: A comprehensive evaluation of the code quality
+2. **Rubric Evaluation**: Detailed assessment against each rubric criterion
+3. **Strengths**: What the code does well
+4. **Areas for Improvement**: Specific issues and suggestions
+5. **Grade Recommendation**: Suggested grade (a score between 1 to 10, decimals allowed) with justification
+6. **Detailed Feedback**: Actionable recommendations for improvement
+
+Format your response clearly with headers and bullet points for easy reading.
