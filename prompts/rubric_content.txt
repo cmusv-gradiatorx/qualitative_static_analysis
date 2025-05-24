@@ -18,68 +18,7 @@ data.onrender.com/). It generates a pre-determined set of quotes that contain ar
 below). This endpoint doesn't account for subscription parameters provided - it will always generate the same market data quotes.
 There is no need to provide an API key.
 Market data will be emitted one value at a time, encompassed in an array (same format as Polygon’s).
-Upon establishing a connection, a message will be broadcasted:
-[{ "ev":"status", "status":"connected", "message": "Connected Successfully" }]
-The first market data message will contain the “ev” field, which is the identifier to distinguish the type of message.
-Please see below an example of two successive market data updates.
-[{"ev":"XQ","pair":"SOL-USD","x":23,"bp":28.05,"bs":19.98,"ap":28.07,"as":20.12,"t":1701197108733}]
-[{"pair":"SOL-USD","ev":"XQ","x":6,"bp":28.05,"bs":21.22,"ap":28.06,"as":35,"t":1701197108760}]
-You should use the following Trading Strategy parameters to seize arbitrage opportunities in the simulated real-time feed:
-number of crypto currencies to track: 5
-- minimal price spread value: 0,05
-- minimal transaction profit: 5
-- maximal transaction value: 2000
-- maximal trading value: 5000
-After 7 market data updates, the following orders should be placed:
-SOL-USD, 6 (BitStamp) Buy, 28.06, 35.00
-SOL-USD, 23 (Kraken) Sell, 28.22, 35.00
-After 12 market data updates, the following order should be placed:
-DOT-USD, 2 (BitFinex) Buy, 5.2529, 150.0
-DOT-USD, 6 (BitStamp) Sell, 5.314, 150
-1.2 Orders management
-Once an arbitrage opportunity is identified and meets the trading strategy constraints, buy and sell orders should be emitted to corresponding crypto
-currency exchanges and their lifecycle managed in the system. Order placing should be followed by an order status retrieval automatically after
-a delay of 5s.
-Many of the exchanges offer APIs both as REST and websockets-accessible. While in an industrial set up the latter would be favoured (for it's truly
-real time nature), in the context of the project, REST APIs should be used. This approach will facilitate testing of the platform with mock responses
-(as part of the final delivery).
-4/21/25, 2:23 PM Milestone III
 
-https://canvas.cmu.edu/courses/41846/assignments/729630 1/3
-
-To ensure a uniform format of the responses handled, your solution needs to handle specific REST API endpoints for all of the crypto currencies
-exchanges as per the list below. You do not need to register or authenticate with the exchanges - as part of Milestone IV mock endpoints will be used
-for testing.
-Bitfinex:
-Submit order: https://docs.bitfinex.com/reference/rest-auth-submit-order (https://docs.bitfinex.com/reference/rest-auth-submit-order)
-
-Retrieve order trades: https://docs.bitfinex.com/reference/rest-auth-order-trades (https://docs.bitfinex.com/reference/rest-auth-order-
-trades)
-
-Kraken:
-Submit order: https://docs.kraken.com/rest/#tag/Trading/operation/addOrder
-(https://docs.kraken.com/rest/#tag/Trading/operation/addOrder)
-Query order information https://docs.kraken.com/rest/#tag/Account-Data/operation/getOrdersInfo
-(https://docs.kraken.com/rest/#tag/Account-Data/operation/getOrdersInfo)
-Bitstamp:
-Emit buy order: https://www.bitstamp.net/api/#tag/Orders/operation/OpenMarketBuyOrder
-(https://www.bitstamp.net/api/#tag/Orders/operation/OpenMarketBuyOrder)
-Emit sell order: https://www.bitstamp.net/api/#tag/Orders/operation/OpenMarketSellOrder
-(https://www.bitstamp.net/api/#tag/Orders/operation/OpenMarketSellOrder)
-Retrieve order status: https://www.bitstamp.net/api/#tag/Orders/operation/GetOrderStatus
-(https://www.bitstamp.net/api/#tag/Orders/operation/GetOrderStatus)
-Data persistence needs to take place as per the project specification document (https://canvas.cmu.edu/courses/41846/files/11646688) , Real time
-trading algorithm section.
-E-mail notifications are part of the next milestone.
-1.3 P&L calculation (teams of 4)
-Please refer to the project specification document (https://canvas.cmu.edu/courses/41846/files/11646688) , for functional requirements of this
-feature. The system needs to handle input from the user to set and update P&L threshold and launch P&L calculation on demand - these correspond
-to dedicated REST API endpoints.
-E-mail notifications are part of the next milestone.
-1.4 Annualized return metric calculation refactoring (teams of 4)
-Please update the existing implementation to remove hard-coded values used in Milestone II :
-the start date of trading activity - this should correspond to the "start trading" action in 1.1
-cumulative P&L value - this needs to be propagated from 1.3.
 2) Error handling
 Error handling mechanism should be implemented for all functions containing side effects in the system.
 The solution should employ railroad-oriented programming for error handling and use a variety of adapter/converter functions depending on the need
