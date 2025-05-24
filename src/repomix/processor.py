@@ -10,6 +10,7 @@ Author: Auto-generated
 import subprocess
 import os
 import shutil
+import platform
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 import tempfile
@@ -40,6 +41,7 @@ class RepomixProcessor:
         self.use_compression = use_compression
         self.remove_comments = remove_comments
         self.logger = get_logger(__name__)
+        self.is_windows = platform.system().lower() == 'windows'
         
         # Check if repomix is available
         self._check_repomix_availability()
@@ -47,11 +49,13 @@ class RepomixProcessor:
     def _check_repomix_availability(self) -> None:
         """Check if repomix is available via npx."""
         try:
+            # On Windows, we need shell=True to properly execute npx
             result = subprocess.run(
                 ['npx', 'repomix', '--version'],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                shell=self.is_windows
             )
             if result.returncode == 0:
                 self.logger.info(f"Repomix available: {result.stdout.strip()}")
@@ -111,29 +115,43 @@ class RepomixProcessor:
             cmd.extend(['--output', str(output_file)])
             cmd.extend(['--style', style])
             
+            # Add compression options
             if compressed:
+                cmd.append('--compress')
                 cmd.append('--remove-empty-lines')
-                cmd.append('--remove-duplicate-empty-lines')
             
             if self.remove_comments:
                 cmd.append('--remove-comments')
             
-            # Add token counting
-            cmd.append('--include-token-count')
+            # Add token counting with encoding
+            cmd.extend(['--token-count-encoding', 'cl100k_base'])
             
             self.logger.info(f"Running repomix: {' '.join(cmd)}")
             
-            # Execute repomix
+            # Set environment to use UTF-8 encoding
+            env = os.environ.copy()
+            if self.is_windows:
+                env['PYTHONIOENCODING'] = 'utf-8'
+            
+            # Execute repomix with proper encoding handling
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=300,  # 5 minutes timeout
-                cwd=project_dir.parent
+                cwd=project_dir.parent,
+                shell=self.is_windows,
+                env=env,
+                encoding='utf-8',
+                errors='replace'  # Replace problematic characters instead of failing
             )
             
             if result.returncode != 0:
-                error_msg = f"Repomix failed: {result.stderr}"
+                error_msg = f"Repomix failed with return code {result.returncode}"
+                if result.stderr:
+                    error_msg += f": {result.stderr}"
+                if result.stdout:
+                    error_msg += f"\nOutput: {result.stdout}"
                 self.logger.error(error_msg)
                 raise Exception(error_msg)
             
@@ -141,10 +159,11 @@ class RepomixProcessor:
             if not output_file.exists():
                 raise Exception("Repomix output file was not created")
             
-            content = output_file.read_text(encoding='utf-8')
+            content = output_file.read_text(encoding='utf-8', errors='replace')
             
             # Extract token count from repomix output (if available)
-            token_count = self._extract_token_count(result.stdout, content)
+            stdout_text = result.stdout if result.stdout else ""
+            token_count = self._extract_token_count(stdout_text, content)
             
             return {
                 'content': content,

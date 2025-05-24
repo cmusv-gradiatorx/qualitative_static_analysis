@@ -44,9 +44,19 @@ def main():
         results = autograder.process_assignments()
         
         if results:
-            console.print(f"\n[green]✅ Successfully processed {len(results)} assignment(s)[/green]")
-            for result in results:
-                console.print(f"  📄 {result['filename']} -> {result['output_file']}")
+            # Count successful and failed results
+            successful = [r for r in results if r.get('success', False)]
+            failed = [r for r in results if not r.get('success', False)]
+            
+            if successful:
+                console.print(f"\n[green]✅ Successfully processed {len(successful)} assignment(s)[/green]")
+                for result in successful:
+                    console.print(f"  📄 {result['filename']} -> {result['output_file']}")
+            
+            if failed:
+                console.print(f"\n[red]❌ Failed to process {len(failed)} assignment(s)[/red]")
+                for result in failed:
+                    console.print(f"  📄 {result['filename']} - Error: {result.get('error', 'Unknown error')}")
         else:
             console.print("\n[yellow]⚠️  No assignments found to process[/yellow]")
             console.print(f"Place ZIP files in the '{settings.input_folder}' directory")

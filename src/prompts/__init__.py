@@ -1,5 +1,5 @@
 """Prompt management module for AutoGrader."""
 
-from .prompt_manager import PromptManager, PromptTemplate, SimplePromptTemplate
+from .prompt_manager import PromptManager
 
-__all__ = ['PromptManager', 'PromptTemplate', 'SimplePromptTemplate'] 
+__all__ = ['PromptManager'] 
