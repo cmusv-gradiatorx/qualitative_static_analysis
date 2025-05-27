@@ -64,6 +64,11 @@ class Settings:
         self.use_compression = os.getenv('USE_COMPRESSION', 'true').lower() == 'true'
         self.remove_comments = os.getenv('REMOVE_COMMENTS', 'false').lower() == 'true'
         
+        # Semgrep configuration
+        self.enable_semgrep_analysis = os.getenv('ENABLE_SEMGREP_ANALYSIS', 'true').lower() == 'true'
+        self.semgrep_rules_file = Path(os.getenv('SEMGREP_RULES_FILE', 'config/semgrep_rules.yaml'))
+        self.semgrep_timeout = int(os.getenv('SEMGREP_TIMEOUT', '300'))
+        
         # Create directories if they don't exist
         self._create_directories()
         

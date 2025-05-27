@@ -102,3 +102,7 @@ config.env
 # yarn-error.log*
 # package-lock.json # If you don't want to track exact dependency versions for Node tools
 # yarn.lock         # If you don't want to track exact dependency versions for Node tools
+
+# Requirements
+################################################################################
+Requirements.md

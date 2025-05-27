@@ -1,0 +1,189 @@
+rules:
+  # Single Responsibility Principle (SRP) Violations
+  - id: srp-large-class
+    pattern-either:
+      - pattern: |
+          class $CLASS {
+            ...
+            $METHOD1(...) { ... }
+            ...
+            $METHOD2(...) { ... }
+            ...
+            $METHOD3(...) { ... }
+            ...
+            $METHOD4(...) { ... }
+            ...
+            $METHOD5(...) { ... }
+            ...
+            $METHOD6(...) { ... }
+            ...
+            $METHOD7(...) { ... }
+            ...
+            $METHOD8(...) { ... }
+            ...
+          }
+    message: "Class may violate SRP - consider breaking down large classes with many methods"
+    languages: [java, csharp, typescript, javascript]
+    severity: WARNING
+
+  # Open/Closed Principle (OCP) Violations
+  - id: ocp-switch-statements
+    pattern-either:
+      - pattern: |
+          switch ($VAR) {
+            case $CASE1:
+              ...
+            case $CASE2:
+              ...
+            case $CASE3:
+              ...
+            case $CASE4:
+              ...
+            default:
+              ...
+          }
+      - pattern: |
+          if ($VAR == $VALUE1) {
+            ...
+          } else if ($VAR == $VALUE2) {
+            ...
+          } else if ($VAR == $VALUE3) {
+            ...
+          } else if ($VAR == $VALUE4) {
+            ...
+          }
+    message: "Large switch/if-else statements may violate OCP - consider using polymorphism or strategy pattern"
+    languages: [java, csharp, typescript, javascript, python]
+    severity: INFO
+
+  # Dependency Inversion Principle (DIP) Violations
+  - id: dip-concrete-dependencies
+    pattern: |
+      class $CLASS {
+        ...
+        private $CONCRETE_TYPE $FIELD = new $CONCRETE_TYPE(...);
+        ...
+      }
+    message: "Direct instantiation of concrete classes may violate DIP - consider dependency injection"
+    languages: [java, csharp]
+    severity: INFO
+
+  # Interface Segregation Principle (ISP) Violations
+  - id: isp-large-interface
+    pattern: |
+      interface $INTERFACE {
+        ...
+        $METHOD1(...);
+        ...
+        $METHOD2(...);
+        ...
+        $METHOD3(...);
+        ...
+        $METHOD4(...);
+        ...
+        $METHOD5(...);
+        ...
+        $METHOD6(...);
+        ...
+        $METHOD7(...);
+        ...
+        $METHOD8(...);
+        ...
+      }
+    message: "Large interfaces may violate ISP - consider splitting into smaller, focused interfaces"
+    languages: [java, csharp, typescript]
+    severity: WARNING
+
+  # Code Smell: Long Parameter Lists
+  - id: long-parameter-list
+    pattern-either:
+      - pattern: |
+          $RETURN_TYPE $METHOD($P1, $P2, $P3, $P4, $P5, $P6, $P7, ...) {
+            ...
+          }
+      - pattern: |
+          function $FUNC($P1, $P2, $P3, $P4, $P5, $P6, $P7, ...) {
+            ...
+          }
+    message: "Long parameter lists are hard to maintain - consider using parameter objects or builder pattern"
+    languages: [java, csharp, typescript, javascript, python]
+    severity: WARNING
+
+  # Code Smell: Duplicate Code
+  - id: duplicate-code-blocks
+    pattern: |
+      {
+        $STMT1;
+        $STMT2;
+        $STMT3;
+        $STMT4;
+        $STMT5;
+      }
+    message: "Potential duplicate code detected - consider extracting common functionality"
+    languages: [java, csharp, typescript, javascript]
+    severity: INFO
+
+  # Code Smell: Magic Numbers
+  - id: magic-numbers
+    pattern-either:
+      - pattern: $VAR == 42
+      - pattern: $VAR == 100
+      - pattern: $VAR == 1000
+      - pattern: $VAR == 3600
+      - pattern: $VAR * 24
+      - pattern: $VAR / 60
+    message: "Magic numbers should be replaced with named constants"
+    languages: [java, csharp, typescript, javascript, python]
+    severity: INFO
+
+  # Design Pattern: Missing Factory Pattern
+  - id: missing-factory-pattern
+    pattern: |
+      class $CLASS {
+        ...
+        public $TYPE create$ENTITY(...) {
+          if ($CONDITION1) {
+            return new $TYPE1(...);
+          } else if ($CONDITION2) {
+            return new $TYPE2(...);
+          } else {
+            return new $TYPE3(...);
+          }
+        }
+        ...
+      }
+    message: "Complex object creation logic should use Factory pattern"
+    languages: [java, csharp]
+    severity: INFO
+
+  # Security: Hardcoded Credentials
+  - id: hardcoded-credentials
+    pattern-either:
+      - pattern: |
+          $VAR = "password123"
+      - pattern: |
+          $VAR = "admin"
+      - pattern: |
+          $VAR = "secret"
+      - pattern: |
+          password = "$VALUE"
+      - pattern: |
+          apiKey = "$VALUE"
+    message: "Hardcoded credentials detected - use environment variables or secure configuration"
+    languages: [java, csharp, typescript, javascript, python]
+    severity: ERROR
+
+  # Performance: Inefficient String Concatenation
+  - id: inefficient-string-concat
+    pattern-either:
+      - pattern: |
+          for (...) {
+            $STR = $STR + $OTHER;
+          }
+      - pattern: |
+          while (...) {
+            $STR = $STR + $OTHER;
+          }
+    message: "String concatenation in loops is inefficient - use StringBuilder or similar"
+    languages: [java, csharp]
+    severity: WARNING 

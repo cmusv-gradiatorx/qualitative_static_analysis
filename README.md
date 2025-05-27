@@ -1,14 +1,13 @@
 # AutoGrader - Graduate Assignment Evaluation System
 
-A sophisticated autograder for graduate-level software engineering assignments that uses Large Language Models (LLMs) for qualitative code analysis. The system processes entire codebases using repomix and provides comprehensive feedback based on customizable rubrics.
+An autograder for graduate-level software engineering assignments that uses Large Language Models (LLMs) for qualitative code analysis. The system processes entire codebases using repomix and provides comprehensive feedback based on customizable rubrics.
 
 ## Features
 
 - **Multi-LLM Support**: Supports Gemini, OpenAI GPT, and Ollama (Llama) models with plug-and-play architecture
-- **Intelligent Token Management**: Automatic token counting and compression using repomix
+- **Token Management**: Automatic token counting and compression using repomix
 - **Customizable Rubrics**: Flexible prompt system for different assignment requirements
-- **Comprehensive Analysis**: Evaluates code quality, architecture, documentation, and best practices
-- **Professional Reporting**: Detailed evaluation reports with processing statistics
+- **Static Code Analysis**: Configurable Semgrep-based static analysis for code quality assessment
 
 ## Architecture
 
@@ -16,7 +15,6 @@ The system follows software engineering best practices with modular design:
 
 - **Strategy Pattern**: For pluggable LLM providers
 - **Factory Pattern**: For LLM provider creation
-- **Template Method Pattern**: For prompt construction
 - **Facade Pattern**: For simplified API interface
 - **Singleton Pattern**: For configuration management
 
@@ -58,6 +56,11 @@ The system follows software engineering best practices with modular design:
    # Configure token limits and processing
    MAX_TOKENS=128000
    USE_COMPRESSION=true
+   
+   # Configure static analysis (optional)
+   ENABLE_SEMGREP_ANALYSIS=true
+   SEMGREP_RULES_FILE=config/semgrep_rules.yaml
+   SEMGREP_TIMEOUT=300
    ```
 
 ## Usage
@@ -83,38 +86,8 @@ The system creates default prompt templates that you can customize:
 
 - **`prompts/rubric_content.txt`**: Define your grading rubric
 - **`prompts/instruction_content.txt`**: Specify evaluation instructions
-- **`prompts/rubric_template.txt`**: Template for rubric formatting
-- **`prompts/instruction_template.txt`**: Template for instruction formatting
-- **`prompts/overall_template.txt`**: Overall prompt structure
-
-### Example Rubric Customization
-
-Edit `prompts/rubric_content.txt`:
-
-```markdown
-# Software Design Assignment Rubric
-
-## Design Patterns (30 points)
-- **Excellent (27-30)**: Appropriate use of design patterns
-- **Good (21-26)**: Generally good pattern usage
-- **Fair (15-20)**: Basic patterns with some issues
-- **Poor (0-14)**: Inappropriate or missing patterns
-
-## Code Quality (25 points)
-- Clean, readable code with consistent style
-- Proper error handling and validation
-- Meaningful variable and function names
-
-## Testing (25 points)
-- Comprehensive unit tests
-- Integration tests where appropriate
-- Good test coverage
-
-## Documentation (20 points)
-- Clear README with setup instructions
-- Well-commented code
-- API documentation if applicable
-```
+- **`prompts/static_instructions.txt`**: Define static analysis evaluation criteria
+- **`config/semgrep_rules.yaml`**: Configure Semgrep rules for static analysis
 
 ## LLM Provider Configuration
 
@@ -140,6 +113,19 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.1:8b
 ```
 
+## Static Code Analysis
+
+The system includes optional static code analysis using Semgrep rules:
+
+### Enabling Static Analysis
+Set `ENABLE_SEMGREP_ANALYSIS=true` in your configuration to enable static analysis.
+
+### Configuring Semgrep Rules
+Edit `config/semgrep_rules.yaml` to define custom rules for your assignments
+
+### Static Analysis Instructions
+Customize `prompts/static_instructions.txt` to define how the LLM should evaluate static analysis findings.
+
 ## Project Structure
 
 ```
@@ -160,12 +146,16 @@ autograder/
 │   │   └── prompt_manager.py
 │   ├── repomix/               # Codebase processing
 │   │   └── processor.py
+│   ├── semgrep/               # Static code analysis
+│   │   └── analyzer.py
 │   ├── core/                  # Main application logic
 │   │   └── autograder.py
 │   └── utils/                 # Utilities
 │       └── logger.py
 ├── input/                     # Place ZIP files here
 ├── output/                    # Evaluation reports appear here
+├── config/                    # Configuration files
+│   └── semgrep_rules.yaml    # Semgrep rules for static analysis
 ├── prompts/                   # Customizable prompt templates
 ├── temp/                      # Temporary processing files
 └── logs/                      # Application logs
@@ -179,46 +169,6 @@ The system intelligently handles token limits:
 2. **Automatic Compression**: Applies compression if content exceeds limits
 3. **Model-Aware**: Respects each LLM's specific token limits
 4. **Fallback Estimation**: Provides estimates when exact counts unavailable
-
-## Example Output
-
-```markdown
-# AutoGrader Evaluation Report
-
-**Assignment:** student_project.zip
-**Project Name:** student_project
-**Evaluation Date:** 2024-01-15 14:30:22
-**LLM Provider:** GeminiProvider(model=gemini-1.5-pro)
-
-## Processing Statistics
-
-- **Original Token Count:** 45,230
-- **Compression Applied:** No
-- **Within Token Limit:** Yes
-- **Token Limit:** 128,000
-
-## Evaluation Results
-
-### Overall Assessment
-This is a well-structured project that demonstrates good understanding of software engineering principles...
-
-### Rubric Evaluation
-**Code Quality (23/25)**: The code is generally clean and well-organized...
-**Design Patterns (18/25)**: Some design patterns are used appropriately...
-...
-
-### Strengths
-- Clean, readable code structure
-- Good separation of concerns
-- Comprehensive error handling
-
-### Areas for Improvement
-- Consider implementing the Strategy pattern for payment processing
-- Add more comprehensive unit tests
-- Improve documentation for complex algorithms
-
-### Grade Recommendation: 85/100
-```
 
 ## Troubleshooting
 
@@ -254,14 +204,3 @@ The system is designed for easy extension:
 3. **New processing steps**: Extend the `AutoGrader` class
 4. **Custom analyzers**: Add new modules following the existing patterns
 
-## Contributing
-
-1. Follow the existing code style and patterns
-2. Add comprehensive docstrings and comments
-3. Include appropriate error handling
-4. Write tests for new functionality
-5. Update documentation for new features
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details. 

@@ -18,6 +18,7 @@ from ..config.settings import Settings
 from ..llm.factory import LLMFactory
 from ..prompts.prompt_manager import PromptManager
 from ..repomix.processor import RepomixProcessor
+from ..semgrep.analyzer import SemgrepAnalyzer
 from ..utils.logger import get_logger
 
 
@@ -47,6 +48,19 @@ class AutoGrader:
             use_compression=settings.use_compression,
             remove_comments=settings.remove_comments
         )
+        
+        # Initialize semgrep analyzer if enabled
+        self.semgrep_analyzer = None
+        if settings.enable_semgrep_analysis:
+            try:
+                self.semgrep_analyzer = SemgrepAnalyzer(
+                    rules_file=settings.semgrep_rules_file,
+                    timeout=settings.semgrep_timeout
+                )
+                self.logger.info("Semgrep analyzer initialized")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize Semgrep analyzer: {str(e)}")
+                self.logger.warning("Continuing without static analysis")
         
         self.logger.info(f"AutoGrader initialized with {self.llm_provider}")
     
@@ -122,9 +136,23 @@ class AutoGrader:
                 self.logger.info("Step 3: Generating LLM evaluation")
                 evaluation = self.llm_provider.generate_response(prompt)
                 
-                # Step 4: Save results
-                self.logger.info("Step 4: Saving evaluation results")
-                output_file = self._save_evaluation(zip_path, evaluation, repomix_result)
+                # Step 4: Run semgrep analysis if enabled
+                semgrep_analysis = ""
+                semgrep_result = None
+                if self.semgrep_analyzer:
+                    self.logger.info("Step 4: Running Semgrep static analysis")
+                    semgrep_result = self.semgrep_analyzer.analyze_codebase(zip_path, temp_dir)
+                    
+                    if semgrep_result['success']:
+                        self.logger.info("Step 4a: Generating static analysis evaluation")
+                        static_prompt = self.prompt_manager.create_static_analysis_prompt(semgrep_result)
+                        semgrep_analysis = self.llm_provider.generate_response(static_prompt)
+                    else:
+                        self.logger.warning(f"Semgrep analysis failed: {semgrep_result.get('error', 'Unknown error')}")
+                
+                # Step 5: Save results
+                self.logger.info("Step 5: Saving evaluation results")
+                output_file = self._save_evaluation(zip_path, evaluation, repomix_result, semgrep_analysis, semgrep_result)
                 
                 return {
                     'filename': zip_path.name,
@@ -133,7 +161,9 @@ class AutoGrader:
                     'token_count': repomix_result['token_count'],
                     'compressed': repomix_result['compressed'],
                     'project_name': repomix_result['project_name'],
-                    'evaluation_length': len(evaluation)
+                    'evaluation_length': len(evaluation),
+                    'semgrep_enabled': self.semgrep_analyzer is not None,
+                    'semgrep_findings': semgrep_result['findings_count'] if semgrep_result else 0
                 }
                 
             except Exception as e:
@@ -141,7 +171,8 @@ class AutoGrader:
                 raise
     
     def _save_evaluation(self, zip_path: Path, evaluation: str, 
-                        repomix_result: Dict[str, Any]) -> Path:
+                        repomix_result: Dict[str, Any], semgrep_analysis: str = "", 
+                        semgrep_result: Optional[Dict[str, Any]] = None) -> Path:
         """
         Save the evaluation results to the output directory.
         
@@ -149,6 +180,8 @@ class AutoGrader:
             zip_path: Original ZIP file path
             evaluation: LLM evaluation text
             repomix_result: Repomix processing results
+            semgrep_analysis: Static analysis evaluation text
+            semgrep_result: Semgrep analysis results
             
         Returns:
             Path to the saved evaluation file
@@ -161,7 +194,7 @@ class AutoGrader:
         
         # Create evaluation report
         report = self._create_evaluation_report(
-            zip_path, evaluation, repomix_result
+            zip_path, evaluation, repomix_result, semgrep_analysis, semgrep_result
         )
         
         # Save to file
@@ -171,7 +204,8 @@ class AutoGrader:
         return output_path
     
     def _create_evaluation_report(self, zip_path: Path, evaluation: str,
-                                 repomix_result: Dict[str, Any]) -> str:
+                                 repomix_result: Dict[str, Any], semgrep_analysis: str = "",
+                                 semgrep_result: Optional[Dict[str, Any]] = None) -> str:
         """
         Create a comprehensive evaluation report.
         
@@ -179,12 +213,30 @@ class AutoGrader:
             zip_path: Original ZIP file path
             evaluation: LLM evaluation text
             repomix_result: Repomix processing results
+            semgrep_analysis: Static analysis evaluation text
+            semgrep_result: Semgrep analysis results
             
         Returns:
             Formatted evaluation report
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
+        # Build processing statistics
+        processing_stats = f"""## Processing Statistics
+
+- **Original Token Count:** {repomix_result['token_count']:,}
+- **Compression Applied:** {'Yes' if repomix_result['compressed'] else 'No'}
+- **Within Token Limit:** {'Yes' if repomix_result['within_limit'] else 'No'}
+- **Token Limit:** {self.settings.max_tokens:,}"""
+        
+        # Add semgrep statistics if enabled
+        if self.semgrep_analyzer and semgrep_result:
+            processing_stats += f"""
+- **Static Analysis:** {'Enabled' if self.semgrep_analyzer else 'Disabled'}
+- **Static Analysis Findings:** {semgrep_result['findings_count']}
+- **Static Analysis Status:** {'Success' if semgrep_result['success'] else 'Failed'}"""
+        
+        # Build the complete report
         report = f"""# AutoGrader Evaluation Report
 
 **Assignment:** {zip_path.name}
@@ -192,16 +244,21 @@ class AutoGrader:
 **Evaluation Date:** {timestamp}
 **LLM Provider:** {self.llm_provider}
 
-## Processing Statistics
+{processing_stats}
 
-- **Original Token Count:** {repomix_result['token_count']:,}
-- **Compression Applied:** {'Yes' if repomix_result['compressed'] else 'No'}
-- **Within Token Limit:** {'Yes' if repomix_result['within_limit'] else 'No'}
-- **Token Limit:** {self.settings.max_tokens:,}
+## Code Quality Evaluation
 
-## Evaluation Results
+{evaluation}"""
+        
+        # Add static analysis section if available
+        if semgrep_analysis:
+            report += f"""
 
-{evaluation}
+## Static Code Analysis
+
+{semgrep_analysis}"""
+        
+        report += """
 
 ---
 *Generated by AutoGrader v1.0*
@@ -268,10 +325,18 @@ class AutoGrader:
         """
         zip_files = self._find_zip_files()
         
-        return {
+        status = {
             'llm_provider': str(self.llm_provider),
             'max_tokens': self.settings.max_tokens,
             'pending_assignments': len(zip_files),
             'input_folder': str(self.settings.input_folder),
-            'output_folder': str(self.settings.output_folder)
-        } 
+            'output_folder': str(self.settings.output_folder),
+            'semgrep_enabled': self.settings.enable_semgrep_analysis,
+            'semgrep_analyzer': self.semgrep_analyzer is not None
+        }
+        
+        if self.semgrep_analyzer:
+            status['semgrep_rules_file'] = str(self.settings.semgrep_rules_file)
+            status['semgrep_timeout'] = self.settings.semgrep_timeout
+        
+        return status 

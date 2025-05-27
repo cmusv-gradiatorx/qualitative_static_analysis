@@ -32,6 +32,7 @@ class PromptManager:
         # Define required content files
         self.rubric_content_file = self.prompts_dir / "rubric_content.txt"
         self.instruction_content_file = self.prompts_dir / "instruction_content.txt"
+        self.static_instructions_file = self.prompts_dir / "static_instructions.txt"
         
         # Validate that required files exist
         self._validate_content_files()
@@ -57,7 +58,8 @@ class PromptManager:
                 f"  - {chr(10).join(missing_files)}\n\n"
                 f"Please create these files in the '{self.prompts_dir}' directory:\n"
                 f"  - 'rubric_content.txt': Define your grading rubric\n"
-                f"  - 'instruction_content.txt': Specify evaluation instructions"
+                f"  - 'instruction_content.txt': Specify evaluation instructions\n"
+                f"  - 'static_instructions.txt': Define static analysis evaluation instructions (optional)"
             )
             raise FileNotFoundError(error_msg)
     
@@ -94,6 +96,23 @@ class PromptManager:
             raise FileNotFoundError(f"Instruction content file not found: {self.instruction_content_file}")
         except Exception as e:
             raise Exception(f"Error reading instruction content: {str(e)}")
+    
+    def load_static_instructions(self) -> str:
+        """
+        Load static analysis instruction content from file.
+        
+        Returns:
+            Static analysis instruction content as string
+            
+        Raises:
+            FileNotFoundError: If static instructions file doesn't exist
+        """
+        try:
+            return self.static_instructions_file.read_text(encoding='utf-8')
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Static instructions file not found: {self.static_instructions_file}")
+        except Exception as e:
+            raise Exception(f"Error reading static instructions: {str(e)}")
     
     def _create_rubric_prompt(self, rubric_content: str) -> str:
         """
@@ -198,6 +217,86 @@ Please provide a thorough evaluation following the rubric and instructions above
         except Exception as e:
             raise Exception(f"Failed to create final prompt: {str(e)}")
     
+    def create_static_analysis_prompt(self, semgrep_results: Dict[str, Any]) -> str:
+        """
+        Create a prompt for static analysis evaluation using semgrep results.
+        
+        Args:
+            semgrep_results: Results from semgrep analysis
+            
+        Returns:
+            Complete prompt for static analysis evaluation
+            
+        Raises:
+            FileNotFoundError: If static instructions file doesn't exist
+        """
+        try:
+            # Load static analysis instructions
+            static_instructions = self.load_static_instructions()
+            
+            # Format semgrep results for the prompt
+            findings_text = self._format_semgrep_findings(semgrep_results)
+            
+            # Create the complete static analysis prompt
+            prompt = f"""You are an expert software engineering instructor performing static code analysis evaluation.
+
+**STATIC ANALYSIS INSTRUCTIONS:**
+{static_instructions}
+
+**SEMGREP ANALYSIS RESULTS:**
+{findings_text}
+
+Please analyze these static analysis findings and provide a comprehensive evaluation following the instructions above.
+"""
+            
+            return prompt
+            
+        except Exception as e:
+            raise Exception(f"Failed to create static analysis prompt: {str(e)}")
+    
+    def _format_semgrep_findings(self, semgrep_results: Dict[str, Any]) -> str:
+        """
+        Format semgrep findings for inclusion in the prompt.
+        
+        Args:
+            semgrep_results: Semgrep analysis results
+            
+        Returns:
+            Formatted findings text
+        """
+        if not semgrep_results['success']:
+            return f"Static analysis failed: {semgrep_results.get('error', 'Unknown error')}"
+        
+        findings = semgrep_results['findings']
+        summary = semgrep_results['summary']
+        
+        if not findings:
+            return "No static analysis issues were found in the codebase."
+        
+        # Format summary
+        summary_text = f"""## Analysis Summary
+- **Total Issues Found:** {summary['total_findings']}
+- **By Severity:** {', '.join(f"{sev}: {count}" for sev, count in summary['by_severity'].items())}
+- **Files Affected:** {len(summary['by_file'])}
+
+"""
+        
+        # Format detailed findings
+        findings_text = "## Detailed Findings\n\n"
+        for i, finding in enumerate(findings, 1):
+            findings_text += f"""### Finding #{i}: {finding.rule_id}
+- **File:** {finding.file_path} (Line {finding.line})
+- **Severity:** {finding.severity}
+- **Message:** {finding.message}
+- **Code Snippet:**
+```
+{finding.code_snippet}
+```
+
+"""
+        
+        return summary_text + findings_text
+    
     def get_content_files_status(self) -> Dict[str, bool]:
         """
         Get the status of required content files.
@@ -207,5 +306,6 @@ Please provide a thorough evaluation following the rubric and instructions above
         """
         return {
             'rubric_content.txt': self.rubric_content_file.exists(),
-            'instruction_content.txt': self.instruction_content_file.exists()
+            'instruction_content.txt': self.instruction_content_file.exists(),
+            'static_instructions.txt': self.static_instructions_file.exists()
         } 
