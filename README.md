@@ -22,7 +22,7 @@ The system follows software engineering best practices with modular design:
 
 1. **Clone the repository**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/cmusv-gradiatorx/qualitative_static_analysis.git
    cd autograder
    ```
 
@@ -46,21 +46,38 @@ The system follows software engineering best practices with modular design:
 
 2. **Edit `config.env` with your credentials**
    ```env
-   # Choose your LLM provider
-   LLM_PROVIDER=gemini  # or openai, ollama
-   
-   # Add your API keys
-   GEMINI_API_KEY=your_actual_api_key_here
-   OPENAI_API_KEY=your_actual_api_key_here
-   
-   # Configure token limits and processing
+   # LLM Configuration
+   # Choose the LLM provider: gemini, openai, ollama
+   LLM_PROVIDER=ollama
+
+   # Gemini Configuration
+   GEMINI_API_KEY=your_gemini_api_key_here
+   GEMINI_MODEL=gemini-1.5-pro
+
+   # OpenAI Configuration
+   OPENAI_API_KEY=your_openai_key
+   OPENAI_MODEL=gpt-4o
+   OPENAI_ORG_ID=optional
+
+   # Ollama Configuration (for local Llama models)
+   OLLAMA_BASE_URL=http://localhost:11434
+   #OLLAMA_MODEL=llama3.1
+   OLLAMA_MODEL=deepseek-r1
+
+   # Application Configuration
+   INPUT_FOLDER=input
+   OUTPUT_FOLDER=output
+   TEMP_FOLDER=temp
+
+   # Repomix Configuration
    MAX_TOKENS=128000
    USE_COMPRESSION=true
-   
-   # Configure static analysis (optional)
-   ENABLE_SEMGREP_ANALYSIS=true
+   REMOVE_COMMENTS=false 
+
+   # Semgrep Static Analysis Configuration
+   ENABLE_SEMGREP_ANALYSIS=false
    SEMGREP_RULES_FILE=config/semgrep_rules.yaml
-   SEMGREP_TIMEOUT=300
+   SEMGREP_TIMEOUT=300 
    ```
 
 ## Usage
