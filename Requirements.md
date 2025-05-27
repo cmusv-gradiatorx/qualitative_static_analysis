@@ -1,3 +1,5 @@
+AUTOGRADER REQUIREMENTS
+
 The project requirement is to create an autograder for graduate student level assignments in software engineering.
 This project's scope is to do a qualitative level analysis of the entire code using LLMs.
 
@@ -19,3 +21,40 @@ For final output, no need to go with specific strcuture of output since that wil
 For the repomix logic, go through the docs and see how best it can be used in the project, with token logic, compress and everything. For the repomix input folder, expect it from a zip file presnt in a folder(create the folder). I will add the codebase as zip to that folder(donot unzip yourself, check repomix docs, it takes in zips). At the end of processing delete this zip file.
 
 For the start atleast provide suppoert for gemini, openai, llama from ollama. Keep the code highly modular and extensible, maintainability is of peak importance. Use design patterns where needed, follow OOPS if that helps in extensibility. Comment code like a proper software engineer. Do not create extra class/functions if not needed. The project should follow best coding practices but be simple. In future we might have a lot of extra stuff so doing extra thing right now might make it complex (for example, no need to keep stuff like batch processing right now, if needed we can do those later. Right now just have an input folder to take zip input and an output folder to dump the final LLM response). Language of coding should be python. Create the env file as well with dummy creds, i will fill. For the config, I will do that using env, no need to create a cli based solution.
+
+NEW FEATURE
+
+The above requirement is for a core service:autograder
+Next service: A static analysis on basic of injectable rules on sem grep. Again following best coding practices for maintainability extensibility and design patterns.
+What this is for for: The zip file frovided as input is fed into semgrep(with whatver preprocessing is needed). The semgrep works on rules in my understanding. The rules should be injectable as those will change from assignment to assignment:
+One example you can add in the rules file for now:
+
+rules:
+  # Single Responsibility Principle (SRP) Violations
+  - id: srp-large-class
+    pattern-either:
+      - pattern: |
+          class $CLASS {
+            ...
+            $METHOD1(...) { ... }
+            ...
+            $METHOD2(...) { ... }
+            ...
+            $METHOD3(...) { ... }
+            ...
+            $METHOD4(...) { ... }
+            ...
+            $METHOD5(...) { ... }
+            ...
+            $METHOD6(...) { ... }
+            ...
+            $METHOD7(...) { ... }
+            ...
+            $METHOD8(...) { ... }
+            ...
+          }
+    message: "Class may violate SRP - consider breaking down large classes with many methods"
+    languages: [java, csharp, typescript, javascript]
+    severity: WARNING
+
+The result from the semgrep analysis on the codebase on the basis of rules defined(again, keep this configurable, app needs to be extensible) should be passed to a LLM (use existing LLM provider, add a new prompt to prompts folder, so that too is configurable). For now, write in that prompt to provide an analysis of the static analysis. Use the rubric and create a new prompt file called as static_instructions. In the final file being generated which only had autograder stuff before, append the LLM repsonse for static analysis using semgrep as well. Don't change anything in the autograder, add this new component. And also as before: Use design patterns where needed, follow OOPS if that helps in extensibility. Comment code like a proper software engineer. Do not create extra class/functions if not needed. The project should follow best coding practices but be simple. In future we might have a lot of extra stuff so doing extra thing right now might make it complex (for example, no need to keep stuff like batch processing right now, if needed we can do those later). Language of coding should be python.
