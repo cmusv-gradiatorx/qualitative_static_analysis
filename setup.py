@@ -47,10 +47,39 @@ def main():
         console.print("[yellow]⚠️  Could not check repomix. Ensure Node.js is installed.[/yellow]")
     
     # Create directories
-    directories = ['input', 'output', 'temp', 'logs', 'prompts']
+    directories = ['input', 'output', 'temp', 'logs', 'prompts', 'config']
     for directory in directories:
         Path(directory).mkdir(exist_ok=True)
         console.print(f"[green]✅ Created directory: {directory}/[/green]")
+    
+    # Create template files if they don't exist
+    console.print("\n[bold]Creating Template Files[/bold]")
+    
+    # Create prompts template files
+    prompt_files = {
+        'prompts/instruction_content.txt': 'Add your assignment instructions here.',
+        'prompts/rubric_content.txt': 'Add your assignment rubric here.',
+        'prompts/static_instructions.txt': 'Add your assignment static analysis instructions here.'
+    }
+    
+    for file_path, content in prompt_files.items():
+        if not Path(file_path).exists():
+            Path(file_path).write_text(content, encoding='utf-8')
+            console.print(f"[green]✅ Created template: {file_path}[/green]")
+        else:
+            console.print(f"[yellow]⚠️  File exists: {file_path}[/yellow]")
+    
+    # Create config template files
+    config_files = {
+        'config/semgrep_rules.yaml': 'Add your semgrep rules here.'
+    }
+    
+    for file_path, content in config_files.items():
+        if not Path(file_path).exists():
+            Path(file_path).write_text(content, encoding='utf-8')
+            console.print(f"[green]✅ Created template: {file_path}[/green]")
+        else:
+            console.print(f"[yellow]⚠️  File exists: {file_path}[/yellow]")
     
     # Configuration setup
     console.print("\n[bold]Configuration Setup[/bold]")
