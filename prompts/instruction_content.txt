@@ -1,1 +1,1 @@
-For grading give a score between 0 and 10, could be a decimal.
+For grading give a score between 0 and 10, could be a decimal. Always provide this grading. It is a must!!

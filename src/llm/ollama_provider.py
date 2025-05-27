@@ -25,10 +25,12 @@ class OllamaProvider(LLMProvider):
     
     # Approximate token limits for different Ollama models
     MODEL_LIMITS = {
+        'llama3.1': 131072,
         'llama3.1:8b': 131072,
         'llama3.1:70b': 131072,
         'llama3:8b': 8192,
         'llama3:70b': 8192,
+        'deepseek-r1': 131072,
         'codellama:7b': 16384,
         'codellama:13b': 16384,
         'deepseek-coder': 16384,
@@ -36,14 +38,13 @@ class OllamaProvider(LLMProvider):
     
     def __init__(self, config: Dict[str, Any]):
         """Initialize Ollama provider with base URL and model configuration."""
-        super().__init__(config)
-        
         self.base_url = config.get('base_url', 'http://localhost:11434')
         self.generate_url = f"{self.base_url}/api/generate"
         
         # Initialize tokenizer for token counting (approximate)
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
         
+        super().__init__(config)
         # Test connection to Ollama
         self._test_connection()
     

@@ -130,8 +130,8 @@ Please provide:
 2. **Rubric Evaluation**: Detailed assessment against each rubric criterion
 3. **Strengths**: What the code does well
 4. **Areas for Improvement**: Specific issues and suggestions
-5. **Grade Recommendation**: Suggested grade with justification
-6. **Detailed Feedback**: Actionable recommendations for improvement
+5. **Detailed Feedback**: Actionable recommendations for improvement
+5. **Score recommendation**: Suggested a score for the assignment on the basis of the rubric and the code. Make sure the score is a decimal between 0 and 10.
 
 Format your response clearly with headers and bullet points for easy reading.
 """
@@ -158,6 +158,9 @@ Format your response clearly with headers and bullet points for easy reading.
 
 **CODEBASE TO EVALUATE:**
 {codebase_content}
+
+**INSTRUCTIONS:**
+{instruction_prompt}
 
 Please provide a thorough evaluation following the rubric and instructions above.
 """
