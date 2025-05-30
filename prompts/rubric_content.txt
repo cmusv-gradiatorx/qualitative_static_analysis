@@ -1,79 +1,162 @@
-1) Functional scope
-As part of this milestone, you need to develop the remaining functionalities of the system (apart from e-mail notifications) and integrate them (ensure
-they interact with each other as expected). Like last time, functionalities need to be implemented end-to-end (including side effects), along with data
-types that are used as part of them as well as some unit tests (team of 4). The following functionalities are in scope:
-Real-time trading
-Orders management
-P&L calculation (teams of 4)
-Annualized return metric calculation (adaptations of hard-coded values)
-1.1 Real-time trading
-Please refer to the project specification document (https://canvas.cmu.edu/courses/41846/files/11646688) (section Real-time trading algorithm) for
-functional requirements of this feature. Additionally, the system needs to handle input from the user to initiate and stop trading on demand - these
-correspond to dedicated REST API endpoints. The functionality needs to integrate with real-time data management (market data cache included) and
-trading parameters management developed in Milestone II.
+# ArbitrageGainer - Functional Programming Assignment Evaluation Rubric
 
-Given the indeterministic nature of real-time market data, for testing purposes you can use a dedicated mock API (wss://one8656-live-
-data.onrender.com/). It generates a pre-determined set of quotes that contain arbitrage opportunities for a specific set of trading parameters (see
+## Project Context
+You are evaluating an implementation of **ArbitrageGainer**, a cryptocurrency arbitrage trading system built with functional programming principles. The system identifies and executes arbitrage opportunities across multiple cryptocurrency exchanges (Bitfinex, Bitstamp, Kraken) by:
 
-below). This endpoint doesn't account for subscription parameters provided - it will always generate the same market data quotes.
-There is no need to provide an API key.
-Market data will be emitted one value at a time, encompassed in an array (same format as Polygon’s).
+- Managing user-defined trading parameters
+- Identifying cross-traded cryptocurrency pairs
+- Calculating historical arbitrage opportunities  
+- Executing real-time trading with risk management
+- Computing P&L and annualized returns (for 4-person teams)
 
-2) Error handling
-Error handling mechanism should be implemented for all functions containing side effects in the system.
-The solution should employ railroad-oriented programming for error handling and use a variety of adapter/converter functions depending on the need
-(refer to lecture 12 for more details).
-3) Unit tests
-Some area of the solution (see list below) need to be covered with unit tests - a handful of tests per functionality is expected. Given that each team
-structures the workflows as they please, unit tests should match the granularity of your workflow steps.
-P&L calculation
+## Evaluation Framework (Total: 10 points)
 
-Technical Debt and next steps
-During this milestone, you will focus on extensive integration work, both within your existing code and with external systems. Please keep in mind
-that, as part of the evaluation, a code review will take place (code will not be executed). It might reveal areas where your implementation introduces
-functional issues or requires improvements. However, when integrating different parts of the system, there might be other issues which will be
-classified as "Technical Debt."
-Technical Debt refers to the outstanding work or potential problems that need to be addressed in the future milestone to improve code quality,
-maintainability, and functionality. This includes, but is not limited to:
-4/21/25, 2:23 PM Milestone III
+### 1. Completeness (6.0 points)
 
-https://canvas.cmu.edu/courses/41846/assignments/729630 2/3
+**Evaluate the implementation and integration of all required functionalities:**
 
-Points
-Submitting
-10
-a website url or a file upload
+#### 1.1 Real-time Trading System (2.0 points)
+- **Excellent (1.8-2.0)**: Complete real-time trading with proper WebSocket integration, arbitrage detection, order management, stop/start controls, and user-defined trading parameters
+- **Good (1.4-1.7)**: Most trading functionality implemented with minor gaps in integration or parameter handling
+- **Satisfactory (1.0-1.3)**: Basic trading logic present but incomplete integration or missing key components
+- **Poor (0.0-0.9)**: Missing or severely incomplete trading implementation
 
-Due For Available from Until
-Nov 24, 2024 Everyone - -
-Incomplete or suboptimal integration points within your code.
-Potential bugs or performance issues introduced during the integration.
-External system integration issues.
-Any other technical shortcomings identified by the development team.
-You will need to prioritize addressing this technical debt in the next milestone to ensure the robustness and reliability of your projects. This approach
-ensures continuous improvement and helps maintain high standards of code quality throughout the development process.
+#### 1.2 Orders Management (1.5 points)
+- **Excellent (1.3-1.5)**: Comprehensive order lifecycle management with status tracking, partial fills, database persistence, and proper handling of buy/sell order matching
+- **Good (1.0-1.2)**: Good order management with minor issues in edge cases or status tracking
+- **Satisfactory (0.7-0.9)**: Basic order handling but missing some lifecycle management features
+- **Poor (0.0-0.6)**: Incomplete or incorrect order management
 
-Submission
-To verify completeness of your implementation, please prepare a document (README/pdf/doc/other) that lists the functionalities of your solution
-(please use the same structure as in the milestone description) and the source code file where they can be found.
-Include any known issues (Technical Debt) that the team will address in Milestone IV.
+#### 1.3 P&L Calculation (1.5 points)
+- **Excellent (1.3-1.5)**: Accurate P&L calculation for all order types with proper profit/loss tracking, threshold notifications, and historical P&L retrieval
+- **Good (1.0-1.2)**: Mostly correct P&L with minor calculation issues or missing threshold features
+- **Satisfactory (0.7-0.9)**: Basic P&L implementation but incomplete or inaccurate calculations
+- **Poor (0.0-0.6)**: Missing or fundamentally incorrect P&L calculation
 
-Evaluation
-The solution will be evaluated among three dimensions: completeness (6), respect of Functional Programming and DDD principles (2) and Code
-Clarity and Readability (2). Your code will not be executed and assessment will be based on a peer review (functional correctness issues are treated
-as Technical Debt to be addressed in Milestone IV)
+#### 1.4 Annualized Return Metric Calculation (0.5 points)
+*For 4-person teams only*
+- **Excellent (0.45-0.5)**: Correct annualized return calculation with proper time period handling and formula implementation
+- **Good (0.35-0.44)**: Mostly correct implementation with minor issues
+- **Satisfactory (0.25-0.34)**: Basic implementation but calculation errors
+- **Poor (0.0-0.24)**: Missing or incorrect implementation
 
-The source code needs to be aligned with Functional Programming and Domain-Driven Design principles, which implies that (the list is non-
-exhaustive):
+#### 1.5 System Integration & End-to-End Functionality (0.5 points)
+- **Excellent (0.45-0.5)**: All components work together seamlessly with proper data flow between trading, P&L, and parameter management
+- **Good (0.35-0.44)**: Good integration with minor issues in component interaction
+- **Satisfactory (0.25-0.34)**: Basic integration but some components disconnected or poorly integrated
+- **Poor (0.0-0.24)**: Poor or missing integration between system components
 
-The solution domain model is implemented using algebraic type system, which:
-uses ubiquitous language (devoid of technical jargon and understandable to business),
-employs a variety of constructs (e.g. simple type, discriminated union, option type, generics) to ensure that data follows business rules
-Codebase is well-commented, modular and has consistent naming conventions and logical structure.
-Codebase respects the Onion Architecture correctly.
-Error handling is implemented with the Railroad-Oriented Programming approach.
-System handles scenarios like unexpected API responses, network failures, or data format discrepancies with appropriate error messages.
-Each business logic function should work on immutable data.
-Dependencies are managed explicitly as function parameters.
-Control flow expressions are avoided, and pattern matching/collections are used instead.
-OOP constructs of F# are not used.
+### 2. Respect of Functional Programming and Domain-Driven Design Principles (2.0 points)
+
+#### 2.1 Functional Programming Principles (1.0 point)
+**Evaluate core FP practices:**
+- **Immutability**: All data transformations create new instances, no mutable state
+- **Pure functions**: Business logic functions have no side effects and are deterministic
+- **Function composition**: Complex operations built from smaller, composable functions
+- **Higher-order functions**: Effective use of map, filter, fold, and custom higher-order functions
+- **Error handling**: Consistent use of Result types and railroad-oriented programming patterns
+- **Avoidance of imperative constructs**: No loops, mutations, or object-oriented patterns
+- **Side effect management**: Clear separation between pure and impure functions
+
+**Scoring:**
+- **Excellent (0.9-1.0)**: Consistent functional approach throughout, masterful use of FP concepts, comprehensive error handling with Result types
+- **Good (0.7-0.8)**: Strong functional programming with occasional minor lapses, good use of most FP principles
+- **Satisfactory (0.5-0.6)**: Mixed approach with some functional principles applied but inconsistent usage
+- **Poor (0.0-0.4)**: Predominantly imperative approach or incorrect application of functional patterns
+
+#### 2.2 Domain-Driven Design Principles (1.0 point)
+**Evaluate DDD implementation:**
+- **Ubiquitous language**: Clear, business-focused naming throughout the codebase
+- **Algebraic type system**: Rich use of discriminated unions, record types, and option types to model domain concepts
+- **Business rules in types**: Domain constraints and rules enforced through the type system
+- **Domain modeling**: Appropriate entities for trading concepts (Order, ArbitrageOpportunity, TradingParameters, etc.)
+- **Onion Architecture**: Clear separation between domain, application, and infrastructure layers
+- **Dependency direction**: Dependencies point inward toward the domain core
+- **Domain purity**: Domain layer free from external infrastructure concerns
+
+**Scoring:**
+- **Excellent (0.9-1.0)**: Rich domain model with comprehensive algebraic types, perfect architectural layering, strong ubiquitous language
+- **Good (0.7-0.8)**: Good domain modeling with appropriate types and mostly clear architecture
+- **Satisfactory (0.5-0.6)**: Basic domain modeling but incomplete type usage or unclear layer separation
+- **Poor (0.0-0.4)**: Poor domain modeling, limited use of types, or confused architectural layers
+
+### 3. Code Clarity and Readability (2.0 points)
+
+#### 3.1 Code Organization & Structure (1.0 point)
+**Evaluate:**
+- Clear module structure aligned with domain boundaries
+- Logical code organization following functional programming patterns
+- Consistent naming conventions using ubiquitous language
+- Appropriate function granularity and single responsibility
+- Well-organized file and folder structure
+
+**Scoring:**
+- **Excellent (0.9-1.0)**: Exceptionally well-organized code with clear structure and excellent naming
+- **Good (0.7-0.8)**: Well-organized with good structure and mostly clear naming
+- **Satisfactory (0.5-0.6)**: Adequate organization but some inconsistencies or unclear structure
+- **Poor (0.0-0.4)**: Poor organization, confusing structure, or inconsistent naming
+
+#### 3.2 Documentation, Comments & Testing (1.0 point)
+**Evaluate:**
+- **Comments**: Well-commented code with meaningful explanations of complex business logic
+- **Documentation**: Clear module documentation and function signatures
+- **Unit tests**: Meaningful tests covering P&L calculations and other core functionality
+- **Code readability**: Self-documenting code that is easy to understand
+- **Test organization**: Well-structured test cases that validate business logic
+
+**Scoring:**
+- **Excellent (0.9-1.0)**: Comprehensive documentation, excellent comments, thorough testing
+- **Good (0.7-0.8)**: Good documentation and testing with minor gaps
+- **Satisfactory (0.5-0.6)**: Basic documentation and some testing but incomplete
+- **Poor (0.0-0.4)**: Poor or missing documentation, comments, and testing
+
+## Evaluation Instructions
+
+### Step 1: Completeness Assessment (6 points)
+Systematically evaluate each functional requirement:
+1. **Trace the real-time trading workflow** from data subscription to order execution
+2. **Verify order management lifecycle** including status tracking and persistence
+3. **Test P&L calculation logic** with various scenarios (profits, losses, partial fills)
+4. **Check system integration** to ensure components work together seamlessly
+5. **For 4-person teams**: Validate annualized return calculations
+
+### Step 2: Functional Programming Assessment (1 point)
+1. **Examine function purity** - Look for side-effect-free business logic functions
+2. **Evaluate immutability** - Check that data transformations create new instances
+3. **Review function composition** - Assess how complex operations are built from simpler functions
+4. **Analyze error handling** - Look for consistent Result type usage and railroad-oriented programming
+5. **Check imperative patterns** - Identify any loops, mutations, or OOP constructs that should be avoided
+
+### Step 3: Domain-Driven Design Assessment (1 point)
+1. **Examine the domain model** - Look for rich algebraic types that capture business rules
+2. **Review architectural layers** - Assess separation between domain, application, and infrastructure
+3. **Evaluate ubiquitous language** - Check for consistent business terminology throughout
+4. **Analyze type usage** - Look for appropriate use of discriminated unions, records, and options
+5. **Check dependency direction** - Ensure dependencies point toward the domain core
+
+### Step 4: Code Clarity & Readability Assessment (2 points)
+1. **Review code organization** - Assess module structure and naming conventions
+2. **Evaluate documentation** - Check comments, function signatures, and overall clarity
+3. **Examine testing** - Look for meaningful unit tests, especially for P&L calculations
+4. **Assess readability** - Determine if code is self-documenting and easy to understand
+
+## Scoring Guidelines
+
+**9.0-10.0 (Exceptional)**: Professional-quality implementation with complete functionality, excellent FP practices, and outstanding code clarity.
+
+**8.0-8.9 (Excellent)**: Strong implementation with most features complete, good FP adherence, and clear, well-documented code.
+
+**7.0-7.9 (Good)**: Competent implementation with core features working, decent FP practices, and adequate code organization.
+
+**6.0-6.9 (Satisfactory)**: Basic implementation with essential features present, some FP principles applied, but gaps in completeness or clarity.
+
+**5.0-5.9 (Below Average)**: Limited implementation with missing features, poor FP practices, or unclear code organization.
+
+**0.0-4.9 (Unsatisfactory)**: Incomplete, non-functional, or fundamentally flawed implementation.
+
+## Key Success Indicators
+- **Complete functional implementation** of all ArbitrageGainer features
+- **Mastery of functional programming** with consistent immutability, pure functions, and proper error handling
+- **Rich domain-driven design** with expressive types and clean architectural layering
+- **Clean, readable code** with consistent organization and good documentation
+- **Meaningful unit tests** that validate business logic, especially P&L calculations
