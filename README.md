@@ -41,7 +41,7 @@ The system follows software engineering best practices with modular design:
 
 1. **Copy the environment configuration**
    ```bash
-   cp config.env config.env.local
+   cp config.env.local config.env
    ```
 
 2. **Edit `config.env` with your credentials**
@@ -220,4 +220,3 @@ The system is designed for easy extension:
 2. **Custom prompt templates**: Inherit from `PromptTemplate`
 3. **New processing steps**: Extend the `AutoGrader` class
 4. **Custom analyzers**: Add new modules following the existing patterns
-

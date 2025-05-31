@@ -31,6 +31,7 @@ class OllamaProvider(LLMProvider):
         'llama3:8b': 8192,
         'llama3:70b': 8192,
         'deepseek-r1': 131072,
+        'deepseek-r1:14b': 131072,
         'codellama:7b': 16384,
         'codellama:13b': 16384,
         'deepseek-coder': 16384,

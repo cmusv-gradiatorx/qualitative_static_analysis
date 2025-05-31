@@ -1,0 +1,82 @@
+What is this application about? 
+We call it ArbitrageGainer and the goal is to seize “arbitrage” opportunities which present themselves when there exists a price difference in cryptocurrencies on various cryptocurrency exchanges e.g Kraken and Bitstamp. Whenever a given cryptocurrency is available at a lower price on a certain exchange and at a higher price on the other, the application initiates an order to purchase on the low-priced exchange and an order to sell on the high-priced exchange. Like in real-world trading, both orders need to be matched with a seller/buyer on the respective stock exchanges. As markets move swiftly this is not guaranteed to happen hence every arbitrage transaction has inherent risk to it. 
+ 
+What are the application’s high-level features? 
+A system user should be able to do the following: 
+- Provide several user-defined trading strategy parameters: number of crypto currencies to track, minimal price spread value, minimal transaction profit, maximal transaction value, maximal trading value (across a set of all transactions), initial investment amount (teams of 4 only). The user needs to be able to provide his e-mail for notification purposes and reset the maximal trading value. 
+- On demand, retrieve a list of crypto currencies traded at selected cryptocurrency exchanges (Bitfinex, Bitstamp, Kraken) and identify currency pairs that are traded across multiple exchanges (algorithm provided below). 
+- On demand for all the cross-traded crypto currencies and a given time period, determine how many historical arbitrage opportunities occurred (algorithm provided below). 
+- Launch real-time trading activity. This requires subscribion to real-time market data feed (Polygon.io) for crypto currencies that exhibited price spread in the past, retrieving the data continuously and applying user’s trading strategy automatically until stop conditions are met (algorithm provided below). 
+- Stop real-time trading activity - a user can choose to manually stop the trading activity at any time. 
+
+Teams of 4 have to implement an auxiliary module calculating Profits & Losses as well as Annualized return metric (see last page). 
+ 
+Are there any assumptions concerning the system? 
+- System works for 1 user only (it’s like a personal trading app) 
+- System deals with 1 currency only: $ (dollars) 
+ 
+Cross-traded crypto currencies identification algorithm 
+1. Retrieve a list of crypto currencies traded at every exchange (Bitfinex, Bitstamp, Kraken) separately. 
+2. Compare the sets to identify crypto currency pairs that are traded at at least two exchanges. 
+3. Store the information on cross-traded cryptocurrencies in the database in the following format: currency1Symbol-currency2symbol (e.g. CHZ-USD). 
+    • The objective is to identify all cross-traded currency pairs. Very often they trade against USD only but if crypto-crypto pair is sold on more than 1 exchange then is should also be accounted for. 
+    • You can treat currency pairs as a set of 3 letter tickers and ignore anything else - e.g. XYZABC would correspond to currency1 = XYZ and currency 2 = ABC. In the case of pairs where one currency has >3 letters (e.g. AUDIOUSD), you should ignore this pair altogether. 
+ 
+Historical arbitrage opportunities calculation algorithm 
+1. Load historical values file (text file with quotes). 
+2. For all data points (regardless of their origin – underlying currency exchange): 
+    1. Regroup quotes into buckets of 5 milliseconds (no need to adjust the groupings relative to the timestamp of the first quote). 
+    2. For each crypto currency pair where there is data from more than 1 exchange: 
+        1. Select a quote with highest bid price for every exchange. 
+        2. Compare bid and ask prices between all exchanges and identify arbitrage opportunity (identified as a price difference of more than 0,01$). 
+        3. Comparison should be carried out in both direction (e.g. ask in exchange 1 to bid in exchange 2 and ask in exchange 2 to bid in exchange 1). 
+        4. Should there be multiple pairs of quotes from the same exchanges that meet the criteria, only 1 opportunity needs to be accounted for. 
+3.  Persist the arbitrage opportunities in the following format: currency1Symbol-currency2symbol      (e.g. CHZ-USD); numberOfOpportunitiesIdentified (e.g. 20) 
+    
+Real-time trading algorithm 
+1. Subscribe to real-time data feed (Polygon.io) for a set of cryptocurrency pairs (defined by “number of crypto currencies to track” trading parameter) that exhibited most arbitrage opportunities in the past (outcome of historical arbitrage opportunities calculation) and retrieve the data continuously for selected exchanges. 
+    •  The cryptocurrency pairs need to be cross-checked with the list of cross-traded crypto currencies. 
+2. Process continuously real-time feed for a given currency pair to identify arbitrage opportunities: 
+    1. Upon receiving new price quote for a subscribed currency pair, check if a price spread exists (defined by “minimal price spread value” trading parameter). 
+    2. If so, apply a trading strategy which takes into consideration the following user-defined parameters: 
+        * minimal profit, 
+        * maximal total transaction value = buy + sell orders value, o maximal trading value. 
+    3. If the arbitrage opportunity is deemed worthwhile by the trading strategy algorithm, emit buy and sell market orders to the concerned cryptocurrencies exchanges. 
+        • The quantity of cryptocurrency units purchased in a buy order should match the quantity of the same cryptocurrency units available for sale at another exchange. 
+        • The buy order quantity should not exceed the ask quantity but can be smaller. 
+        • The system should act only on arbitrage opportunity with highest spread (if arbitrage is possible across multiple exchanges) and emit 1 buy and 1 sell order. 
+        • If the available quantity of cryptocurrency at a specific price on an exchange is not fully utilized in a single order, the remaining quantity should be retained for potential use in subsequent orders. 
+        • If the arbitrage opportunity exceeds maximal total transaction value or maximal trading value, the order quantity should be reduced to meet the applicable limits (so that the opportunity is acted on, while respecting the trading strategy). 
+    4. Persist the orders emitted in the database. 
+3. Retrieve the order status updates: 
+    • For both order legs (buy and sell) fully fulfilled, store transactions history in a database. 
+    • For partially fulfilled orders, emit one more order with the remaining amount (desired amount – booked amount) and the original price; store the realized transactions and the newly emitted order in the database. 
+    • For orders that had only one side filled, notify the user via e-mail and persist the transaction history in the database. 
+
+   
+P&L calculation (teams of 4 only) 
+Profit and Loss (P&L) management is a crucial aspect of financial trading systems as it involves calculating and tracking the gains or losses generated from trading activities. Robust P&L management is essential for assessing the success of trading strategies and making informed decisions, ultimately helping users maximize their profits and manage their portfolios effectively. 
+ 
+1. The profit and loss calculation are based only for completed orders (ones that were matched, even partially, on an exchange). They should consider the order type:  
+    • For a "buy" order, calculate the profit or loss by subtracting the total purchase cost (amount * purchase price) from the total sale revenue (amount * sale price).  
+    • For a "sell" order, calculate the profit or loss by subtracting the total sale revenue from the total purchase cost. 
+2. P&L should be continuously calculated as trading activity takes place. 
+3. The user can configure a P&L threshold and be notified via e-mail when that specific profit target is achieved. 
+    1. The threshold is optional and can be set separately from the trading parameters. 
+        • Once a threshold is set, it can be cancelled by providing “0” as the target. 
+    2. The system should automatically stop trading when the threshold is met. 
+        • A notification e-mail should be sent to the user. 
+        • The P&L threshold should be reset. 
+    3. The user can set a new desired threshold and manually restart training (by interacting with the corresponding functionalities). 
+4. The user can request historical P&L values by providing start and end date of evaluation. 
+ 
+Annualized return metric calculation (teams of 4 only): 
+Annualized return measures the average yearly return of a trading strategy, providing a more extended view of performance. 
+ 
+1. Calculate the total return of the real-time trading activity over the entire investment period. 
+    1. User needs to provide “initial investment amount” as one of the trading parameters. 
+2. Determine the number of years the strategy was employed. 
+    * If the strategy was active for less than 1 year, determine the fraction of a year (e.g., 6 months as 0.5 years, 3 months as 0.25 years) and use it as the reference duration. 
+    * Start date of trading activity is the moment a user elects to imitate trading for the first time (equivalent of “Launch real-time trading activity” user-invoked action). 
+3. Calculate the annualized return using the formula:  
+    Annualized Return = (cumulative P&L over the investment period / Initial Investment) ^ (1 / (Duration in Years)) – 1 
