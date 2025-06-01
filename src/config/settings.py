@@ -60,21 +60,16 @@ class Settings:
         self.output_folder = Path(os.getenv('OUTPUT_FOLDER', 'output'))
         self.temp_folder = Path(os.getenv('TEMP_FOLDER', 'temp'))
         
-        # Repomix configuration
+        # Repomix configuration (global defaults)
         self.max_tokens = int(os.getenv('MAX_TOKENS', '128000'))
         self.use_compression = os.getenv('USE_COMPRESSION', 'true').lower() == 'true'
         self.remove_comments = os.getenv('REMOVE_COMMENTS', 'false').lower() == 'true'
         
-        # Semgrep configuration
-        self.enable_semgrep_analysis = os.getenv('ENABLE_SEMGREP_ANALYSIS', 'true').lower() == 'true'
-        self.semgrep_rules_file = Path(os.getenv('SEMGREP_RULES_FILE', 'config/semgrep_rules.yaml'))
-        self.semgrep_timeout = int(os.getenv('SEMGREP_TIMEOUT', '300'))
-        
-        # New parallel processing configuration
-        self.max_parallel_llm = int(os.getenv('MAX_PARALLEL_LLM', '2'))
-        
-        # Project-specific configuration
+        # Project assignment configuration (only this comes from main config)
         self.project_assignment = os.getenv('PROJECT_ASSIGNMENT', 'functional_programming_milestone_3')
+        
+        # Assignment-specific settings are loaded dynamically from project config via get_project_config()
+        # This includes: enable_semgrep_analysis, semgrep_rules_file, semgrep_timeout, max_parallel_llm
         
         # Create directories if they don't exist
         self._create_directories()
@@ -100,9 +95,6 @@ class Settings:
         
         if self.llm_provider == 'openai' and not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required when using OpenAI")
-        
-        if self.max_parallel_llm < 1:
-            raise ValueError("MAX_PARALLEL_LLM must be at least 1")
     
     def get_llm_config(self) -> dict:
         """Get configuration for the selected LLM provider."""
@@ -142,20 +134,24 @@ class Settings:
             "max_file_size": self.max_tokens,
             "ignore_patterns": ["*.pyc", "__pycache__", ".git", "*.log"],
             "keep_patterns": ["*.py", "*.md", "*.txt", "*.yaml", "*.yml", "*.json"],
-            "max_parallel_llm": self.max_parallel_llm,
-            "semgrep_rules_file": str(self.semgrep_rules_file),
-            "semgrep_timeout": self.semgrep_timeout
+            "max_parallel_llm": 2,  # Default value
+            "enable_semgrep_analysis": False,  # Default value  
+            "semgrep_rules_file": "config/semgrep_rules.yaml",  # Default value
+            "semgrep_timeout": 300  # Default value
         }
         
         if project_config_file.exists():
             try:
                 with open(project_config_file, 'r', encoding='utf-8') as f:
                     project_config = json.load(f)
-                    # Merge with defaults, letting project config override
                     default_config.update(project_config)
             except Exception as e:
                 print(f"Warning: Failed to load project config {project_config_file}: {e}")
                 print("Using default configuration")
+        
+        # Validate project-specific settings
+        if default_config.get('max_parallel_llm', 1) < 1:
+            raise ValueError("max_parallel_llm must be at least 1")
         
         return default_config
     

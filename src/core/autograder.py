@@ -63,10 +63,12 @@ class AutoGrader:
         
         # Initialize semgrep analyzer if enabled
         self.semgrep_analyzer = None
-        if settings.enable_semgrep_analysis:
+        enable_semgrep = self.project_config.get('enable_semgrep_analysis', False)
+        
+        if enable_semgrep:
             try:
-                semgrep_rules_file = self.project_config.get('semgrep_rules_file', settings.semgrep_rules_file)
-                semgrep_timeout = self.project_config.get('semgrep_timeout', settings.semgrep_timeout)
+                semgrep_rules_file = self.project_config.get('semgrep_rules_file', 'config/semgrep_rules.yaml')
+                semgrep_timeout = self.project_config.get('semgrep_timeout', 300)
                 
                 self.semgrep_analyzer = SemgrepAnalyzer(
                     rules_file=semgrep_rules_file,
@@ -465,8 +467,8 @@ class AutoGrader:
         base_name = zip_path.stem
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # Main evaluation report
-        main_output_filename = f"{base_name}_evaluation_{timestamp}.txt"
+        # Main evaluation report (Markdown format)
+        main_output_filename = f"{base_name}_evaluation_{timestamp}.md"
         main_output_path = self.settings.output_folder / main_output_filename
         
         # Semgrep raw output file

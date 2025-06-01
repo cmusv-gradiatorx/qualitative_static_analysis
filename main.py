@@ -40,11 +40,14 @@ def main():
         settings = Settings()
         logger.info("Configuration loaded successfully")
         
+        # Get project configuration for display
+        project_config = settings.get_project_config()
+        
         # Display configuration info
         console.print(f"\n[cyan]📋 Configuration:[/cyan]")
         console.print(f"  • Project: {settings.project_assignment}")
         console.print(f"  • LLM Provider: {settings.llm_provider}")
-        console.print(f"  • Max Parallel LLM: {settings.max_parallel_llm}")
+        console.print(f"  • Max Parallel LLM: {project_config.get('max_parallel_llm', 2)}")
         console.print(f"  • Prompts Directory: {settings.get_prompts_dir()}")
         
         # Initialize autograder
