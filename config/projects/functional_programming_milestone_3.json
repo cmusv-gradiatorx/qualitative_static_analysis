@@ -1,5 +1,5 @@
 {
-  "max_file_size": 128000,
+  "max_file_size": 1000000,
   "ignore_patterns": [
     "*.pyc",
     "__pycache__",
@@ -10,25 +10,11 @@
     "target/",
     "build/",
     "dist/",
-    "gitignore"
+    ".gitignore"
   ],
   "keep_patterns": [
-    "*.py",
-    "*.md",
-    "*.txt",
-    "*.yaml",
-    "*.yml",
-    "*.json",
-    "*.scala",
-    "*.hs",
-    "*.fs",
-    "*.f#",
-    "*.ml",
-    "*.elm",
-    "*.clj",
-    "*.cljs"
   ],
-  "max_parallel_llm": 2,
+  "max_parallel_llm": 3,
   "enable_semgrep_analysis": false,
   "semgrep_rules_file": "config/semgrep_rules.yaml",
   "semgrep_timeout": 300

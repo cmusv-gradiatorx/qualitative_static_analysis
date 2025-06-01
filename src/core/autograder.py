@@ -56,9 +56,12 @@ class AutoGrader:
         self.llm_provider = self._initialize_llm_provider()
         self.prompt_manager = PromptManager(settings.get_prompts_dir())
         self.repomix_processor = RepomixProcessor(
-            max_tokens=self.project_config.get('max_file_size', settings.max_tokens),
+            max_tokens=settings.max_tokens,
             use_compression=settings.use_compression,
-            remove_comments=settings.remove_comments
+            remove_comments=settings.remove_comments,
+            ignore_patterns=self.project_config.get('ignore_patterns', []),
+            keep_patterns=self.project_config.get('keep_patterns', []),
+            max_file_size=self.project_config.get('max_file_size')
         )
         
         # Initialize semgrep analyzer if enabled
@@ -83,6 +86,22 @@ class AutoGrader:
         self.logger.info(f"Project: {settings.project_assignment}")
         self.logger.info(f"Max parallel LLM runs: {self.project_config.get('max_parallel_llm', 2)}")
         self.logger.info(f"Extra logs directory: {self.extra_logs_dir}")
+        
+        # Log project-specific filtering configuration
+        ignore_patterns = self.project_config.get('ignore_patterns', [])
+        keep_patterns = self.project_config.get('keep_patterns', [])
+        max_file_size = self.project_config.get('max_file_size')
+        
+        if ignore_patterns or keep_patterns or max_file_size:
+            self.logger.info("Project-specific file filtering enabled:")
+            if ignore_patterns:
+                self.logger.info(f"  - Ignore patterns: {ignore_patterns}")
+            if keep_patterns:
+                self.logger.info(f"  - Keep patterns: {keep_patterns}")
+            if max_file_size:
+                self.logger.info(f"  - Max file size: {max_file_size} bytes")
+        else:
+            self.logger.info("No project-specific file filtering configured")
     
     def _initialize_llm_provider(self):
         """Initialize the LLM provider based on settings."""
@@ -196,7 +215,8 @@ class AutoGrader:
                     'rubric_groups_processed': len(rubric_groups),
                     'total_rubrics': len(specific_rubrics),
                     'semgrep_enabled': self.semgrep_analyzer is not None,
-                    'semgrep_findings': semgrep_result['findings_count'] if semgrep_result else 0
+                    'semgrep_findings': semgrep_result['findings_count'] if semgrep_result else 0,
+                    'filtered_files_count': repomix_result.get('filtered_files_count', 0)
                 }
                 
             except Exception as e:
@@ -521,7 +541,9 @@ class AutoGrader:
 - **Original Token Count:** {repomix_result['token_count']:,}
 - **Compression Applied:** {'Yes' if repomix_result['compressed'] else 'No'}
 - **Within Token Limit:** {'Yes' if repomix_result['within_limit'] else 'No'}
-- **Token Limit:** {self.project_config.get('max_file_size', self.settings.max_tokens):,}
+- **Token Limit (LLM):** {self.settings.max_tokens:,}
+- **Max File Size (Filtering):** {self.project_config.get('max_file_size', 'unlimited')} bytes
+- **Files Filtered by Project Config:** {repomix_result.get('filtered_files_count', 0)}
 - **Parallel LLM Runs:** {len(rubric_evaluations)}
 - **Successful Groups:** {len(successful_groups)}
 - **Failed Groups:** {len(failed_groups)}

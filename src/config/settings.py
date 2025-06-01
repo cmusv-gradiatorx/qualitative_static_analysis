@@ -69,7 +69,8 @@ class Settings:
         self.project_assignment = os.getenv('PROJECT_ASSIGNMENT', 'functional_programming_milestone_3')
         
         # Assignment-specific settings are loaded dynamically from project config via get_project_config()
-        # This includes: enable_semgrep_analysis, semgrep_rules_file, semgrep_timeout, max_parallel_llm
+        # This includes: max_file_size (for file filtering), enable_semgrep_analysis, semgrep_rules_file, 
+        # semgrep_timeout, max_parallel_llm, ignore_patterns, keep_patterns
         
         # Create directories if they don't exist
         self._create_directories()
@@ -131,7 +132,7 @@ class Settings:
         
         # Default configuration if project config doesn't exist
         default_config = {
-            "max_file_size": self.max_tokens,
+            "max_file_size": 1000000,  # 1MB default file size limit for filtering (in bytes)
             "ignore_patterns": ["*.pyc", "__pycache__", ".git", "*.log"],
             "keep_patterns": ["*.py", "*.md", "*.txt", "*.yaml", "*.yml", "*.json"],
             "max_parallel_llm": 2,  # Default value
