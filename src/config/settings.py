@@ -8,8 +8,9 @@ Author: Auto-generated
 """
 
 import os
+import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
 
@@ -69,6 +70,12 @@ class Settings:
         self.semgrep_rules_file = Path(os.getenv('SEMGREP_RULES_FILE', 'config/semgrep_rules.yaml'))
         self.semgrep_timeout = int(os.getenv('SEMGREP_TIMEOUT', '300'))
         
+        # New parallel processing configuration
+        self.max_parallel_llm = int(os.getenv('MAX_PARALLEL_LLM', '2'))
+        
+        # Project-specific configuration
+        self.project_assignment = os.getenv('PROJECT_ASSIGNMENT', 'functional_programming_milestone_3')
+        
         # Create directories if they don't exist
         self._create_directories()
         
@@ -93,6 +100,9 @@ class Settings:
         
         if self.llm_provider == 'openai' and not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required when using OpenAI")
+        
+        if self.max_parallel_llm < 1:
+            raise ValueError("MAX_PARALLEL_LLM must be at least 1")
     
     def get_llm_config(self) -> dict:
         """Get configuration for the selected LLM provider."""
@@ -118,6 +128,46 @@ class Settings:
         else:
             raise ValueError(f"Unknown LLM provider: {self.llm_provider}")
     
+    def get_project_config(self) -> Dict[str, Any]:
+        """
+        Get project-specific configuration from project config file.
+        
+        Returns:
+            Dictionary containing project-specific settings
+        """
+        project_config_file = Path(f"config/projects/{self.project_assignment}.json")
+        
+        # Default configuration if project config doesn't exist
+        default_config = {
+            "max_file_size": self.max_tokens,
+            "ignore_patterns": ["*.pyc", "__pycache__", ".git", "*.log"],
+            "keep_patterns": ["*.py", "*.md", "*.txt", "*.yaml", "*.yml", "*.json"],
+            "max_parallel_llm": self.max_parallel_llm,
+            "semgrep_rules_file": str(self.semgrep_rules_file),
+            "semgrep_timeout": self.semgrep_timeout
+        }
+        
+        if project_config_file.exists():
+            try:
+                with open(project_config_file, 'r', encoding='utf-8') as f:
+                    project_config = json.load(f)
+                    # Merge with defaults, letting project config override
+                    default_config.update(project_config)
+            except Exception as e:
+                print(f"Warning: Failed to load project config {project_config_file}: {e}")
+                print("Using default configuration")
+        
+        return default_config
+    
+    def get_prompts_dir(self) -> Path:
+        """
+        Get the prompts directory for the current project assignment.
+        
+        Returns:
+            Path to the project-specific prompts directory
+        """
+        return Path(f"prompts/{self.project_assignment}")
+    
     def __repr__(self) -> str:
         """String representation of settings."""
-        return f"Settings(llm_provider='{self.llm_provider}', max_tokens={self.max_tokens})" 
+        return f"Settings(llm_provider='{self.llm_provider}', max_tokens={self.max_tokens}, project='{self.project_assignment}')" 

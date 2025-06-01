@@ -3,6 +3,7 @@ AutoGrader Core
 
 Main autograder class that orchestrates the entire grading process.
 This is the central component that coordinates all other modules.
+Supports parallel LLM processing for detailed rubric evaluation.
 
 Author: Auto-generated
 """
@@ -10,6 +11,8 @@ Author: Auto-generated
 import os
 import tempfile
 import shutil
+import asyncio
+import concurrent.futures
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -27,7 +30,7 @@ class AutoGrader:
     Main AutoGrader class that coordinates the grading process.
     
     This class implements the Facade pattern, providing a simple interface
-    to the complex grading subsystem.
+    to the complex grading subsystem with parallel LLM processing support.
     """
     
     def __init__(self, settings: Settings):
@@ -40,11 +43,14 @@ class AutoGrader:
         self.settings = settings
         self.logger = get_logger(__name__)
         
+        # Get project-specific configuration
+        self.project_config = settings.get_project_config()
+        
         # Initialize components
         self.llm_provider = self._initialize_llm_provider()
-        self.prompt_manager = PromptManager(Path("prompts"))
+        self.prompt_manager = PromptManager(settings.get_prompts_dir())
         self.repomix_processor = RepomixProcessor(
-            max_tokens=settings.max_tokens,
+            max_tokens=self.project_config.get('max_file_size', settings.max_tokens),
             use_compression=settings.use_compression,
             remove_comments=settings.remove_comments
         )
@@ -53,9 +59,12 @@ class AutoGrader:
         self.semgrep_analyzer = None
         if settings.enable_semgrep_analysis:
             try:
+                semgrep_rules_file = self.project_config.get('semgrep_rules_file', settings.semgrep_rules_file)
+                semgrep_timeout = self.project_config.get('semgrep_timeout', settings.semgrep_timeout)
+                
                 self.semgrep_analyzer = SemgrepAnalyzer(
-                    rules_file=settings.semgrep_rules_file,
-                    timeout=settings.semgrep_timeout
+                    rules_file=semgrep_rules_file,
+                    timeout=semgrep_timeout
                 )
                 self.logger.info("Semgrep analyzer initialized")
             except Exception as e:
@@ -63,6 +72,8 @@ class AutoGrader:
                 self.logger.warning("Continuing without static analysis")
         
         self.logger.info(f"AutoGrader initialized with {self.llm_provider}")
+        self.logger.info(f"Project: {settings.project_assignment}")
+        self.logger.info(f"Max parallel LLM runs: {self.project_config.get('max_parallel_llm', 2)}")
     
     def _initialize_llm_provider(self):
         """Initialize the LLM provider based on settings."""
@@ -88,7 +99,7 @@ class AutoGrader:
     
     def _process_single_assignment(self, zip_path: Path) -> Dict[str, Any]:
         """
-        Process a single assignment ZIP file.
+        Process a single assignment ZIP file with parallel rubric evaluation.
         
         Args:
             zip_path: Path to the ZIP file
@@ -116,52 +127,63 @@ class AutoGrader:
                 self.logger.info(f"  - Compressed: {repomix_result['compressed']}")
                 self.logger.info(f"  - Within limit: {repomix_result['within_limit']}")
                 
-                # Step 2: Create prompt
-                self.logger.info("Step 2: Creating evaluation prompt")
-                prompt = self.prompt_manager.create_final_prompt(repomix_result['content'])
+                # Step 2: Load prompt components
+                self.logger.info("Step 2: Loading prompt components")
+                assignment_details = self.prompt_manager.load_assignment_details()
+                instructions = self.prompt_manager.load_instruction_content()
+                general_rubric = self.prompt_manager.load_general_rubric()
+                specific_rubrics = self.prompt_manager.load_specific_rubric()
                 
-                # Log prompt stats
-                prompt_tokens = self.llm_provider.count_tokens(prompt)
-                self.logger.info(f"Final prompt token count: {prompt_tokens}")
+                # Step 3: Divide rubrics for parallel processing
+                max_parallel = self.project_config.get('max_parallel_llm', 2)
+                rubric_groups = self.prompt_manager.divide_rubrics_for_parallel_processing(
+                    specific_rubrics, max_parallel
+                )
                 
-                # Check if prompt exceeds model limits
-                max_model_tokens = self.llm_provider.get_max_tokens()
-                if prompt_tokens > max_model_tokens:
-                    self.logger.warning(
-                        f"Prompt ({prompt_tokens} tokens) exceeds model limit "
-                        f"({max_model_tokens} tokens). Results may be truncated."
-                    )
+                self.logger.info(f"Step 3: Divided {len(specific_rubrics)} rubrics into {len(rubric_groups)} groups for parallel processing")
                 
-                # Step 3: Generate evaluation
-                self.logger.info("Step 3: Generating LLM evaluation")
-                evaluation = self.llm_provider.generate_response(prompt)
+                # Step 4: Process rubric groups in parallel
+                self.logger.info("Step 4: Processing rubric evaluations in parallel")
+                rubric_evaluations = self._process_rubrics_parallel(
+                    assignment_details, instructions, repomix_result['content'], 
+                    general_rubric, rubric_groups
+                )
                 
-                # Step 4: Run semgrep analysis if enabled
+                # Step 5: Run semgrep analysis if enabled
                 semgrep_analysis = ""
                 semgrep_result = None
+                semgrep_raw_output = ""
+                
                 if self.semgrep_analyzer:
-                    self.logger.info("Step 4: Running Semgrep static analysis")
+                    self.logger.info("Step 5: Running Semgrep static analysis")
                     semgrep_result = self.semgrep_analyzer.analyze_codebase(zip_path, temp_dir)
                     
+                    # Save raw semgrep output
+                    semgrep_raw_output = self._format_semgrep_raw_output(semgrep_result)
+                    
                     if semgrep_result['success']:
-                        self.logger.info("Step 4a: Generating static analysis evaluation")
+                        self.logger.info("Step 5a: Generating static analysis evaluation")
                         static_prompt = self.prompt_manager.create_static_analysis_prompt(semgrep_result)
                         semgrep_analysis = self.llm_provider.generate_response(static_prompt)
                     else:
                         self.logger.warning(f"Semgrep analysis failed: {semgrep_result.get('error', 'Unknown error')}")
                 
-                # Step 5: Save results
-                self.logger.info("Step 5: Saving evaluation results")
-                output_file = self._save_evaluation(zip_path, evaluation, repomix_result, semgrep_analysis, semgrep_result)
+                # Step 6: Save results
+                self.logger.info("Step 6: Saving evaluation results")
+                output_files = self._save_evaluation_results(
+                    zip_path, rubric_evaluations, semgrep_analysis, 
+                    repomix_result, semgrep_result, semgrep_raw_output
+                )
                 
                 return {
                     'filename': zip_path.name,
-                    'output_file': output_file.name,
+                    'output_files': output_files,
                     'success': True,
                     'token_count': repomix_result['token_count'],
                     'compressed': repomix_result['compressed'],
                     'project_name': repomix_result['project_name'],
-                    'evaluation_length': len(evaluation),
+                    'rubric_groups_processed': len(rubric_groups),
+                    'total_rubrics': len(specific_rubrics),
                     'semgrep_enabled': self.semgrep_analyzer is not None,
                     'semgrep_findings': semgrep_result['findings_count'] if semgrep_result else 0
                 }
@@ -170,54 +192,200 @@ class AutoGrader:
                 self.logger.error(f"Failed to process {zip_path.name}: {str(e)}")
                 raise
     
-    def _save_evaluation(self, zip_path: Path, evaluation: str, 
-                        repomix_result: Dict[str, Any], semgrep_analysis: str = "", 
-                        semgrep_result: Optional[Dict[str, Any]] = None) -> Path:
+    def _process_rubrics_parallel(self, assignment_details: str, instructions: str,
+                                 codebase_content: str, general_rubric: str,
+                                 rubric_groups: List[List[Dict[str, Any]]]) -> List[str]:
         """
-        Save the evaluation results to the output directory.
+        Process rubric groups in parallel using ThreadPoolExecutor.
         
         Args:
-            zip_path: Original ZIP file path
-            evaluation: LLM evaluation text
-            repomix_result: Repomix processing results
-            semgrep_analysis: Static analysis evaluation text
-            semgrep_result: Semgrep analysis results
+            assignment_details: Assignment specification content
+            instructions: General evaluation instructions
+            codebase_content: Processed codebase content
+            general_rubric: General rubric instructions
+            rubric_groups: List of rubric groups to process
             
         Returns:
-            Path to the saved evaluation file
+            List of evaluation results for each group
         """
-        # Create output filename based on input filename
-        base_name = zip_path.stem
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_filename = f"{base_name}_evaluation_{timestamp}.txt"
-        output_path = self.settings.output_folder / output_filename
+        evaluations = []
         
-        # Create evaluation report
-        report = self._create_evaluation_report(
-            zip_path, evaluation, repomix_result, semgrep_analysis, semgrep_result
+        # Use ThreadPoolExecutor for parallel processing
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(rubric_groups)) as executor:
+            # Submit all tasks
+            future_to_group = {}
+            for i, rubric_group in enumerate(rubric_groups):
+                future = executor.submit(
+                    self._evaluate_rubric_group,
+                    assignment_details, instructions, codebase_content,
+                    general_rubric, rubric_group, i + 1
+                )
+                future_to_group[future] = rubric_group
+            
+            # Collect results
+            for future in concurrent.futures.as_completed(future_to_group):
+                rubric_group = future_to_group[future]
+                try:
+                    evaluation = future.result()
+                    evaluations.append(evaluation)
+                except Exception as e:
+                    self.logger.error(f"Failed to evaluate rubric group: {str(e)}")
+                    # Create error evaluation
+                    criteria_names = [criterion['criterion_name'] for criterion in rubric_group]
+                    error_evaluation = f"## Error Processing Criteria: {', '.join(criteria_names)}\n\nError: {str(e)}"
+                    evaluations.append(error_evaluation)
+        
+        return evaluations
+    
+    def _evaluate_rubric_group(self, assignment_details: str, instructions: str,
+                              codebase_content: str, general_rubric: str,
+                              rubric_group: List[Dict[str, Any]], group_num: int) -> str:
+        """
+        Evaluate a single group of rubric criteria.
+        
+        Args:
+            assignment_details: Assignment specification content
+            instructions: General evaluation instructions
+            codebase_content: Processed codebase content
+            general_rubric: General rubric instructions
+            rubric_group: Group of rubric criteria to evaluate
+            group_num: Group number for logging
+            
+        Returns:
+            Evaluation result for this group
+        """
+        criteria_names = [criterion['criterion_name'] for criterion in rubric_group]
+        self.logger.info(f"Processing rubric group {group_num}: {', '.join(criteria_names)}")
+        
+        # Create prompt for this group
+        prompt = self.prompt_manager.create_rubric_evaluation_prompt(
+            assignment_details, instructions, codebase_content,
+            general_rubric, rubric_group
         )
         
-        # Save to file
-        output_path.write_text(report, encoding='utf-8')
-        self.logger.info(f"Evaluation saved to: {output_path}")
+        # Log prompt stats
+        prompt_tokens = self.llm_provider.count_tokens(prompt)
+        self.logger.info(f"Group {group_num} prompt token count: {prompt_tokens}")
         
-        return output_path
+        # Check if prompt exceeds model limits
+        max_model_tokens = self.llm_provider.get_max_tokens()
+        if prompt_tokens > max_model_tokens:
+            self.logger.warning(
+                f"Group {group_num} prompt ({prompt_tokens} tokens) exceeds model limit "
+                f"({max_model_tokens} tokens). Results may be truncated."
+            )
+        
+        # Generate evaluation
+        evaluation = self.llm_provider.generate_response(prompt)
+        self.logger.info(f"Completed evaluation for group {group_num}")
+        
+        return evaluation
     
-    def _create_evaluation_report(self, zip_path: Path, evaluation: str,
-                                 repomix_result: Dict[str, Any], semgrep_analysis: str = "",
-                                 semgrep_result: Optional[Dict[str, Any]] = None) -> str:
+    def _format_semgrep_raw_output(self, semgrep_result: Dict[str, Any]) -> str:
         """
-        Create a comprehensive evaluation report.
+        Format raw semgrep output for saving to file.
         
         Args:
-            zip_path: Original ZIP file path
-            evaluation: LLM evaluation text
-            repomix_result: Repomix processing results
-            semgrep_analysis: Static analysis evaluation text
             semgrep_result: Semgrep analysis results
             
         Returns:
-            Formatted evaluation report
+            Formatted raw output string
+        """
+        if not semgrep_result.get('success'):
+            return f"Semgrep analysis failed: {semgrep_result.get('error', 'Unknown error')}"
+        
+        output = f"# Semgrep Analysis Raw Output\n\n"
+        output += f"**Analysis Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        output += f"**Total Findings:** {semgrep_result.get('findings_count', 0)}\n"
+        output += f"**Analysis Status:** {'Success' if semgrep_result['success'] else 'Failed'}\n\n"
+        
+        if semgrep_result.get('findings_count', 0) == 0:
+            output += "No issues found by static analysis.\n"
+            return output
+        
+        findings = semgrep_result.get('findings', [])
+        if findings:
+            output += "## Detailed Findings\n\n"
+            for i, finding in enumerate(findings, 1):
+                rule_id = finding.get('rule_id', 'Unknown rule')
+                message = finding.get('message', 'No message')
+                file_path = finding.get('file', 'Unknown file')
+                line = finding.get('line', 'Unknown line')
+                severity = finding.get('severity', 'Unknown')
+                
+                output += f"### Finding #{i}\n"
+                output += f"- **Rule ID:** {rule_id}\n"
+                output += f"- **File:** {file_path}\n"
+                output += f"- **Line:** {line}\n"
+                output += f"- **Severity:** {severity}\n"
+                output += f"- **Message:** {message}\n\n"
+        
+        return output
+    
+    def _save_evaluation_results(self, zip_path: Path, rubric_evaluations: List[str],
+                               semgrep_analysis: str, repomix_result: Dict[str, Any],
+                               semgrep_result: Optional[Dict[str, Any]],
+                               semgrep_raw_output: str) -> Dict[str, Path]:
+        """
+        Save all evaluation results to the output directory.
+        
+        Args:
+            zip_path: Original ZIP file path
+            rubric_evaluations: List of rubric evaluation results
+            semgrep_analysis: Static analysis evaluation text
+            repomix_result: Repomix processing results
+            semgrep_result: Semgrep analysis results
+            semgrep_raw_output: Raw semgrep output
+            
+        Returns:
+            Dictionary of output file paths
+        """
+        # Create output filenames based on input filename
+        base_name = zip_path.stem
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Main evaluation report
+        main_output_filename = f"{base_name}_evaluation_{timestamp}.txt"
+        main_output_path = self.settings.output_folder / main_output_filename
+        
+        # Semgrep raw output file
+        semgrep_output_filename = f"{base_name}_semgrep_raw_{timestamp}.txt"
+        semgrep_output_path = self.settings.output_folder / semgrep_output_filename
+        
+        # Create comprehensive evaluation report
+        main_report = self._create_comprehensive_evaluation_report(
+            zip_path, rubric_evaluations, semgrep_analysis, repomix_result, semgrep_result
+        )
+        
+        # Save main report
+        main_output_path.write_text(main_report, encoding='utf-8')
+        self.logger.info(f"Main evaluation saved to: {main_output_path}")
+        
+        # Save semgrep raw output if analysis was performed
+        output_files = {'main_evaluation': main_output_path}
+        
+        if semgrep_raw_output and self.semgrep_analyzer:
+            semgrep_output_path.write_text(semgrep_raw_output, encoding='utf-8')
+            self.logger.info(f"Semgrep raw output saved to: {semgrep_output_path}")
+            output_files['semgrep_raw'] = semgrep_output_path
+        
+        return output_files
+    
+    def _create_comprehensive_evaluation_report(self, zip_path: Path, rubric_evaluations: List[str],
+                                              semgrep_analysis: str, repomix_result: Dict[str, Any],
+                                              semgrep_result: Optional[Dict[str, Any]]) -> str:
+        """
+        Create a comprehensive evaluation report combining all evaluations.
+        
+        Args:
+            zip_path: Original ZIP file path
+            rubric_evaluations: List of rubric evaluation results
+            semgrep_analysis: Static analysis evaluation text
+            repomix_result: Repomix processing results
+            semgrep_result: Semgrep analysis results
+            
+        Returns:
+            Formatted comprehensive evaluation report
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
@@ -227,7 +395,9 @@ class AutoGrader:
 - **Original Token Count:** {repomix_result['token_count']:,}
 - **Compression Applied:** {'Yes' if repomix_result['compressed'] else 'No'}
 - **Within Token Limit:** {'Yes' if repomix_result['within_limit'] else 'No'}
-- **Token Limit:** {self.settings.max_tokens:,}"""
+- **Token Limit:** {self.project_config.get('max_file_size', self.settings.max_tokens):,}
+- **Parallel LLM Runs:** {len(rubric_evaluations)}
+- **Max Parallel Configured:** {self.project_config.get('max_parallel_llm', 2)}"""
         
         # Add semgrep statistics if enabled
         if self.semgrep_analyzer and semgrep_result:
@@ -236,85 +406,96 @@ class AutoGrader:
 - **Static Analysis Findings:** {semgrep_result['findings_count']}
 - **Static Analysis Status:** {'Success' if semgrep_result['success'] else 'Failed'}"""
         
+        # Combine all rubric evaluations
+        combined_rubric_evaluation = "\n\n".join(rubric_evaluations)
+        
         # Build the complete report
-        report = f"""# AutoGrader Evaluation Report
+        report = f"""# AutoGrader Comprehensive Evaluation Report
 
 **Assignment:** {zip_path.name}
 **Project Name:** {repomix_result['project_name']}
 **Evaluation Date:** {timestamp}
 **LLM Provider:** {self.llm_provider}
+**Project Configuration:** {self.settings.project_assignment}
 
 {processing_stats}
 
-## Code Quality Evaluation
+# Rubric-Based Evaluation
 
-{evaluation}"""
+{combined_rubric_evaluation}
+"""
         
-        # Add static analysis section if available
+        # Add static analysis if available
         if semgrep_analysis:
             report += f"""
 
-## Static Code Analysis
+# Static Code Analysis Evaluation
 
-{semgrep_analysis}"""
+{semgrep_analysis}
+"""
         
-        report += """
+        # Add footer
+        report += f"""
 
 ---
-*Generated by AutoGrader v1.0*
+*Report generated by AutoGrader v2.0 - Enhanced with Parallel Processing*
+*For detailed static analysis findings, see the corresponding semgrep raw output file*
 """
+        
         return report
     
     def process_assignments(self) -> List[Dict[str, Any]]:
         """
-        Process all assignments in the input directory.
+        Process all ZIP files in the input directory.
         
         Returns:
             List of processing results for each assignment
         """
         self.logger.info("Starting assignment processing")
         
-        # Find ZIP files to process
         zip_files = self._find_zip_files()
-        
         if not zip_files:
-            self.logger.info("No ZIP files found to process")
+            self.logger.warning("No ZIP files found in input directory")
             return []
         
         results = []
-        
         for zip_path in zip_files:
             try:
                 result = self._process_single_assignment(zip_path)
                 results.append(result)
                 
-                # Clean up processed ZIP file
-                self._cleanup_processed_file(zip_path)
-                
+                # Clean up processed file if successful
+                if result['success']:
+                    self._cleanup_processed_file(zip_path)
+                    
             except Exception as e:
                 self.logger.error(f"Failed to process {zip_path.name}: {str(e)}")
-                # Add failed result
                 results.append({
                     'filename': zip_path.name,
                     'success': False,
                     'error': str(e)
                 })
         
-        self.logger.info(f"Processing complete. {len(results)} assignments processed")
+        self.logger.info(f"Completed processing {len(results)} assignments")
         return results
     
     def _cleanup_processed_file(self, zip_path: Path) -> None:
         """
-        Clean up the processed ZIP file.
+        Clean up the processed ZIP file by moving it to a processed folder.
         
         Args:
-            zip_path: Path to the ZIP file to clean up
+            zip_path: Path to the processed ZIP file
         """
         try:
-            zip_path.unlink()
-            self.logger.info(f"Cleaned up processed file: {zip_path.name}")
+            processed_folder = self.settings.input_folder / "processed"
+            processed_folder.mkdir(exist_ok=True)
+            
+            new_path = processed_folder / zip_path.name
+            shutil.move(str(zip_path), str(new_path))
+            self.logger.info(f"Moved processed file to: {new_path}")
+            
         except Exception as e:
-            self.logger.warning(f"Failed to clean up {zip_path.name}: {str(e)}")
+            self.logger.warning(f"Failed to move processed file {zip_path.name}: {str(e)}")
     
     def get_status(self) -> Dict[str, Any]:
         """
@@ -324,19 +505,15 @@ class AutoGrader:
             Dictionary containing status information
         """
         zip_files = self._find_zip_files()
+        content_status = self.prompt_manager.get_content_files_status()
         
-        status = {
+        return {
             'llm_provider': str(self.llm_provider),
-            'max_tokens': self.settings.max_tokens,
+            'project_assignment': self.settings.project_assignment,
             'pending_assignments': len(zip_files),
-            'input_folder': str(self.settings.input_folder),
-            'output_folder': str(self.settings.output_folder),
-            'semgrep_enabled': self.settings.enable_semgrep_analysis,
-            'semgrep_analyzer': self.semgrep_analyzer is not None
-        }
-        
-        if self.semgrep_analyzer:
-            status['semgrep_rules_file'] = str(self.settings.semgrep_rules_file)
-            status['semgrep_timeout'] = self.settings.semgrep_timeout
-        
-        return status 
+            'assignment_files': [f.name for f in zip_files],
+            'content_files_status': content_status,
+            'semgrep_enabled': self.semgrep_analyzer is not None,
+            'project_config': self.project_config,
+            'prompts_directory': str(self.settings.get_prompts_dir())
+        } 
