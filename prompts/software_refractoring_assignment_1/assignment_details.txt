@@ -1,21 +1,12 @@
 Gilded Rose Refactoring Assignment (Fall’25 Version)
 Objective
 This assignment builds upon our in-class refactoring exercise. You will:
-Create an initial test suite to document the behavior of the unmodified Gilded Rose system.
 Refactor the production code to improve readability and maintainability by following the provided refactoring steps.
-Refactor your test suite, applying similar clean-up and improvement strategies.
 Your goal is to preserve system behavior while enhancing code clarity and test structure.
 
 Tasks
-Task 1: Test Suite 1 — Before Refactoring
-Write a comprehensive test suite for the original system.
-Ensure it captures all observed behaviors, including:
-Quality increases and decreases
-Behavior of special items (e.g., “Aged Brie”, “Sulfuras”, “Backstage passes”)
-Quality constants (e.g., max and min quality constraints)
-Edge cases (e.g., expired items)
 
-Task 2: Refactor the System
+Refactor the System
 Follow the step-by-step guide in the provided file (refactoring_steps_gilded_rose.md)
 Focus on the following:
 Replace magic numbers and strings with constants (e.g., MAX_QUALITY, AGED_BRIE)
@@ -23,13 +14,6 @@ Extract methods to remove code duplication (incrementItemQuality(), decrementIte
 Restructure control flow for clarity
 Add domain-specific helper methods (e.g., updateQualityForItemsThatAgeWell())
 
-Task 3: Test Suite 2 — After Refactoring
-Refactor your original test suite to match the improved system structure.
-This includes:
-Renaming tests for clarity
-Using helper methods to reduce duplication
-Grouping tests logically
-Verifying that all behavior is preserved
 
 Submission Instructions
 Submit:

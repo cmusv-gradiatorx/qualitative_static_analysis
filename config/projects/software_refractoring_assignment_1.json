@@ -14,7 +14,7 @@
     ],
     "keep_patterns": [
     ],
-    "max_parallel_llm": 5,
+    "max_parallel_llm": 2,
     "enable_semgrep_analysis": true,
     "semgrep_rules_file": "config/semgrep_rules.yaml",
     "semgrep_timeout": 300

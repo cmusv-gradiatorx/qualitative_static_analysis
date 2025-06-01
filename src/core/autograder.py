@@ -73,8 +73,11 @@ class AutoGrader:
                 semgrep_rules_file = self.project_config.get('semgrep_rules_file', 'config/semgrep_rules.yaml')
                 semgrep_timeout = self.project_config.get('semgrep_timeout', 300)
                 
+                # Convert string path to Path object
+                rules_file_path = Path(semgrep_rules_file)
+                
                 self.semgrep_analyzer = SemgrepAnalyzer(
-                    rules_file=semgrep_rules_file,
+                    rules_file=rules_file_path,
                     timeout=semgrep_timeout
                 )
                 self.logger.info("Semgrep analyzer initialized")
