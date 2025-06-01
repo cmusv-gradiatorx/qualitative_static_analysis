@@ -85,6 +85,7 @@ temp/
 
 # Log files folder
 logs/
+extra_logs
 # You might also want to ignore specific log files if they appear in the root
 *.log
 *.log.*

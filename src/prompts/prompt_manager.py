@@ -256,21 +256,31 @@ class PromptManager:
 **DETAILED RUBRIC CRITERIA:**
 {combined_specific_prompt}
 
-**REQUIRED OUTPUT FORMAT:**
-For each criterion you are evaluating, provide your assessment in the following structured format:
+**CRITICAL: RESPOND ONLY IN VALID JSON FORMAT**
 
-## [Criterion Name] - Score: [X.X]/[Max Points]
+You must respond with a valid JSON object containing evaluations for each criterion. The JSON structure must be:
 
-### What was done correctly:
-- [List specific strengths and correctly implemented features]
+{{
+  "evaluations": [
+    {{
+      "criterion_name": "Exact criterion name",
+      "max_points": numerical_max_points,
+      "score_obtained": numerical_score_obtained,
+      "feedback_positive": "Detailed feedback on what was done correctly and well",
+      "feedback_negative": "Detailed feedback on major flaws and issues that caused point deductions",
+      "score_justification": "Clear explanation of why this specific score was assigned based on the rubric"
+    }}
+  ]
+}}
 
-### Major flaws identified:
-- [List specific issues and problems that caused point deductions]
+**IMPORTANT REQUIREMENTS:**
+1. Respond ONLY with valid JSON - no additional text before or after
+2. Include all criteria from the rubric group
+3. Ensure scores are within the valid range (0 to max_points)
+4. Provide detailed, constructive feedback
+5. Use exact criterion names as provided in the rubric
 
-### Justification for score:
-[Explain why you assigned this specific score based on the rubric levels]
-
-Please evaluate ONLY the criteria specified above and provide your assessment in the exact format requested.
+Evaluate ONLY the criteria specified above and provide your assessment in the exact JSON format requested.
 """
     
     def create_static_analysis_prompt(self, semgrep_results: Dict[str, Any]) -> str:
@@ -302,19 +312,30 @@ Please evaluate ONLY the criteria specified above and provide your assessment in
 **SEMGREP ANALYSIS RESULTS:**
 {findings_text}
 
-**REQUIRED OUTPUT FORMAT:**
-## Static Code Analysis - Score: [X]/10
+**CRITICAL: RESPOND ONLY IN VALID JSON FORMAT**
 
-### What was done correctly:
-- [List positive findings and good practices identified]
+You must respond with a valid JSON object for the static analysis evaluation. The JSON structure must be:
 
-### Major flaws identified:
-- [List specific issues found by static analysis that caused point deductions]
+{{
+  "evaluations": [
+    {{
+      "criterion_name": "Static Code Analysis",
+      "max_points": 10,
+      "score_obtained": numerical_score_obtained,
+      "feedback_positive": "Detailed feedback on what was done correctly and good practices identified",
+      "feedback_negative": "Detailed feedback on major flaws found by static analysis that caused point deductions",
+      "score_justification": "Clear explanation of why this specific score was assigned out of 10 based on the static analysis findings"
+    }}
+  ]
+}}
 
-### Justification for score:
-[Explain why you assigned this specific score out of 10 based on the static analysis findings]
+**IMPORTANT REQUIREMENTS:**
+1. Respond ONLY with valid JSON - no additional text before or after
+2. Score must be between 0 and 10
+3. Provide detailed, constructive feedback based on static analysis findings
+4. Use "Static Code Analysis" as the criterion name
 
-Please analyze the static analysis findings and provide your assessment in the exact format requested.
+Analyze the static analysis findings and provide your assessment in the exact JSON format requested.
 """
             return prompt
             
