@@ -23,5 +23,25 @@
     "criterion_name": "Production Code: Preservation of Behavior",
     "max_points": 1.0,
     "specific_prompt": "Evaluate the 'Preservation of Behavior' after refactoring the production code. This is typically verified by running the test suites.\n\n**Assessment Guidelines:**\n- **Excellent (1.0 pts):** All provided or student-created tests (relevant to the refactored code, likely Test Suite 2) pass. The functional behavior of the system is fully preserved after refactoring.\n- **Satisfactory (0.5 pts):** Minor, unintended behavior changes are present, or some tests (from Test Suite 2) fail, indicating small deviations from the original behavior.\n- **Needs Improvement (0 pts):** Significant behavior changes have been introduced, or a notable number of tests (from Test Suite 2) fail, indicating the refactoring has broken key functionality.\n\nFocus on: The outcome of running the post-refactoring test suite (Test Suite 2) against the refactored production code. The primary concern is whether the system does the same thing it did before refactoring."
+  },
+  {
+    "criterion_name": "Test Code: Completeness of Test Suite",
+    "max_points": 1.0,
+    "specific_prompt": "Evaluate the 'Completeness of Test Suite' written\n\n**Assessment Guidelines:**\n- **Excellent (1.0 pts):** Test Suite thoroughly tests all relevant methods, behaviors (quality increases/decreases), special items (Aged Brie, Sulfuras, Backstage passes), quality constraints (max/min), and edge cases (e.g., expired items) of the original system.\n- **Satisfactory (0.5 pts):** Test Suite covers most core logic and common behaviors but misses some important edge cases, boundary conditions, or specific item behaviors.\n- **Needs Improvement (0 pts):** Test Suite provides incomplete or superficial test coverage, missing significant portions of the system's logic or critical scenarios.\n\nFocus on: Coverage of different item types, quality update rules, sellIn decrements, quality boundaries (0 and 50), and behavior at and after sellIn date passes 0."
+  },
+  {
+    "criterion_name": "Test Code: Correctness of Test Logic",
+    "max_points": 1.0,
+    "specific_prompt": "Evaluate the 'Correctness of Test Logic' in the test suite. This refers to whether the assertions and expectations in the tests accurately reflect the system's specified behavior.\n\n**Assessment Guidelines:**\n- **Excellent (1.0 pts):** Test cases consistently reflect the correct expected output for each scenario they cover. Assertions are accurate and verify the intended behavior precisely.\n- **Satisfactory (0.5 pts):** Test logic is mostly correct, but there are some minor logical flaws in a few test cases, or assertions might not be perfectly aligned with the expected outcomes in all situations.\n- **Needs Improvement (0 pts):** Test cases contain incorrect logic or assertions that are inconsistent with the actual specified behavior of the system. Expected outcomes are frequently wrong.\n\nFocus on: The assertions made in the tests. Do they check for the right values given the inputs and the Gilded Rose rules?"
+  },
+  {
+    "criterion_name": "Test Code: Code Quality & Organization",
+    "max_points": 1.0,
+    "specific_prompt": "Evaluate the 'Code Quality & Organization' of the test suite.\n\n**Assessment Guidelines:**\n- **Excellent (1.0 pts):** Test code is well-structured, modular (e.g., use of helper methods for setup or common assertions), and highly readable. Test names are descriptive.\n- **Satisfactory (0.5 pts):** There are some structure issues in the test code, or unnecessary repetition exists. Readability could be improved, or test names might be somewhat unclear.\n- **Needs Improvement (0 pts):** Test code is messy, disorganized, hard to read, or contains excessive duplication, making it difficult to understand or maintain.\n\nFocus on: Readability, use of helper functions to avoid repetition, logical grouping of tests, clarity of test names, and overall maintainability of the test code itself."
+  },
+  {
+    "criterion_name": "Test Code: Use of Parameterized Tests",
+    "max_points": 1.0,
+    "specific_prompt": "Evaluate the 'Use of Parameterized Tests' (or similar data-driven testing techniques) in the test suite, especially where they can reduce redundancy.\n\n**Assessment Guidelines:**\n- **Excellent (1.0 pts):** Parameterized tests (or equivalent data-driven approaches) are used effectively to test various scenarios with different inputs/outputs, significantly reducing redundancy and improving test clarity.\n- **Satisfactory (0.5 pts):** Some use of parameterization is evident, but there are still noticeable instances of repeated test structures or assert blocks that could have been consolidated using parameterization.\n- **Needs Improvement (0 pts):** Does not use parameterized tests where they would be clearly beneficial, leading to highly redundant test methods or blocks of assertions.\n\nFocus on: Identifying situations where multiple tests check similar logic with different data, and whether parameterization was used to handle these efficiently."
   }
 ]
