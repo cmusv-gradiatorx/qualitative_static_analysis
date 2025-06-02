@@ -266,8 +266,8 @@ You must respond with a valid JSON object containing evaluations for each criter
       "criterion_name": "Exact criterion name",
       "max_points": numerical_max_points,
       "score_obtained": numerical_score_obtained,
-      "feedback_positive": "Detailed feedback on what was done correctly and well",
-      "feedback_negative": "Detailed feedback on major flaws and issues that caused point deductions",
+      "feedback_positive": "Detailed feedback on what was done correctly and well. Better to provide exact details",
+      "feedback_negative": "Detailed feedback on major flaws and issues that caused point deductions. Better to provide exact details",
       "score_justification": "Clear explanation of why this specific score was assigned based on the rubric"
     }}
   ]
@@ -276,7 +276,7 @@ You must respond with a valid JSON object containing evaluations for each criter
 **IMPORTANT REQUIREMENTS:**
 1. Respond ONLY with valid JSON - no additional text before or after
 2. Include all criteria from the rubric group
-3. Ensure scores are within the valid range (0 to max_points)
+3. Ensure scores are in the range give in rubric and according to the rubric (0 to max_points)
 4. Provide detailed, constructive feedback
 5. Use exact criterion names as provided in the rubric
 

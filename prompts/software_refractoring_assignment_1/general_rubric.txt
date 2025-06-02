@@ -14,4 +14,4 @@ You will be provided with a specific criterion to evaluate from the overall proj
 
 Focus *only* on the provided sub-criterion and its specific requirements. Do not evaluate other aspects of the project unless they are directly relevant to the criterion at hand.
 
-Remember not to be too harsh, stick to the rubric.
+Remember to stick to the rubric, deduct points for flaws you find. DOn't give marks simply for refractoring if there is any violation of rubric, the new code will always be better than old, since refractoring was the very assignment. Your judging should be based on the refractored code and how it fairs with the rubric. Give points where its correct and deduct points with proper detailed explanation where rubric is violated.

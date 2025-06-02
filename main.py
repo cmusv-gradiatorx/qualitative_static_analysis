@@ -29,8 +29,7 @@ def main():
     try:
         # Display welcome message
         console.print(Panel.fit(
-            "[bold blue]Graduate Assignment AutoGrader v2.0[/bold blue]\n"
-            "Enhanced with parallel processing and structured rubric evaluation\n"
+            "[bold blue]Gradiator[/bold blue]\n"
             "Qualitative analysis using LLMs and repomix",
             title="🎓 AutoGrader Enhanced",
             border_style="blue"
