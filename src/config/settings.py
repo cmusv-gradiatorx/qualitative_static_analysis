@@ -68,6 +68,15 @@ class Settings:
         # Project assignment configuration (only this comes from main config)
         self.project_assignment = os.getenv('PROJECT_ASSIGNMENT', 'functional_programming_milestone_3')
         
+        # FAISS Historical Context Configuration
+        self.enable_historical_context = os.getenv('ENABLE_HISTORICAL_CONTEXT', 'false').lower() == 'true'
+        self.faiss_index_path = Path(os.getenv('FAISS_INDEX_PATH', 'src/faiss/index'))
+        self.historical_context_examples = int(os.getenv('HISTORICAL_CONTEXT_EXAMPLES', '3'))
+        self.similarity_threshold = float(os.getenv('SIMILARITY_THRESHOLD', '0.3'))
+        self.include_assignment_stats = os.getenv('INCLUDE_ASSIGNMENT_STATS', 'true').lower() == 'true'
+        self.code_embedding_model = os.getenv('CODE_EMBEDDING_MODEL', 'microsoft/codebert-base')
+        self.faiss_index_type = os.getenv('FAISS_INDEX_TYPE', 'flat')
+        
         # Assignment-specific settings are loaded dynamically from project config via get_project_config()
         # This includes: max_file_size (for file filtering), enable_semgrep_analysis, semgrep_rules_file, 
         # semgrep_timeout, max_parallel_llm, ignore_patterns, keep_patterns
@@ -164,6 +173,24 @@ class Settings:
             Path to the project-specific prompts directory
         """
         return Path(f"prompts/{self.project_assignment}")
+    
+    def get_faiss_config(self) -> Dict[str, Any]:
+        """
+        Get FAISS historical context configuration.
+        
+        Returns:
+            Dictionary containing FAISS configuration
+        """
+        return {
+            'enabled': self.enable_historical_context,
+            'index_path': str(self.faiss_index_path),
+            'max_examples': self.historical_context_examples,
+            'similarity_threshold': self.similarity_threshold,
+            'include_assignment_stats': self.include_assignment_stats,
+            'embedding_model': self.code_embedding_model,
+            'index_type': self.faiss_index_type,
+            'assignment_id': self.project_assignment
+        }
     
     def __repr__(self) -> str:
         """String representation of settings."""

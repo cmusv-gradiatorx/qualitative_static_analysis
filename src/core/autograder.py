@@ -25,6 +25,15 @@ from ..repomix.processor import RepomixProcessor
 from ..semgrep.analyzer import SemgrepAnalyzer
 from ..utils.logger import get_logger
 
+# FAISS Historical Context imports
+try:
+    from ..faiss.faiss_manager import FAISSManager
+    from ..faiss.embedder import HybridCodeEmbedder
+    from ..faiss.historical_context import HistoricalContextProvider
+    FAISS_AVAILABLE = True
+except ImportError:
+    FAISS_AVAILABLE = False
+
 
 class AutoGrader:
     """
@@ -85,10 +94,65 @@ class AutoGrader:
                 self.logger.warning(f"Failed to initialize Semgrep analyzer: {str(e)}")
                 self.logger.warning("Continuing without static analysis")
         
+        # Initialize FAISS historical context if enabled
+        self.historical_context_provider = None
+        faiss_config = settings.get_faiss_config()
+        
+        if faiss_config['enabled'] and FAISS_AVAILABLE:
+            try:
+                self.logger.info("Initializing FAISS historical context system")
+                
+                # Check if FAISS index exists
+                faiss_index_path = Path(faiss_config['index_path'])
+                if faiss_index_path.exists():
+                    # Load existing index
+                    faiss_manager = FAISSManager()
+                    faiss_manager.load_index(str(faiss_index_path))
+                    
+                    # Load embedder with scalers
+                    embedder = HybridCodeEmbedder(
+                        model_name=faiss_config['embedding_model']
+                    )
+                    
+                    scaler_path = faiss_index_path / "scalers.pkl"
+                    if scaler_path.exists():
+                        embedder.load_scalers(str(scaler_path))
+                    
+                    # Create context provider
+                    self.historical_context_provider = HistoricalContextProvider(
+                        faiss_manager, embedder
+                    )
+                    
+                    # Log statistics
+                    stats = faiss_manager.get_statistics()
+                    self.logger.info(f"FAISS historical context initialized:")
+                    self.logger.info(f"  - Index status: {stats.get('status')}")
+                    self.logger.info(f"  - Total submissions: {stats.get('total_submissions', 0)}")
+                    self.logger.info(f"  - Assignments: {stats.get('assignments', [])}")
+                    self.logger.info(f"  - Max examples: {faiss_config['max_examples']}")
+                    self.logger.info(f"  - Similarity threshold: {faiss_config['similarity_threshold']}")
+                    
+                else:
+                    self.logger.warning(f"FAISS index not found at {faiss_index_path}")
+                    self.logger.warning("Historical context will be disabled")
+                    self.logger.info("To build the index, run: python src/faiss/build_index.py")
+                    
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize FAISS historical context: {str(e)}")
+                self.logger.warning("Continuing without historical context")
+                
+        elif faiss_config['enabled'] and not FAISS_AVAILABLE:
+            self.logger.warning("Historical context enabled but FAISS not available")
+            self.logger.warning("Install with: pip install faiss-cpu")
+            
+        elif not faiss_config['enabled']:
+            self.logger.info("Historical context disabled in configuration")
+        
         self.logger.info(f"AutoGrader initialized with {self.llm_provider}")
         self.logger.info(f"Project: {settings.project_assignment}")
         self.logger.info(f"Max parallel LLM runs: {self.project_config.get('max_parallel_llm', 2)}")
         self.logger.info(f"Extra logs directory: {self.extra_logs_dir}")
+        self.logger.info(f"Historical context: {'Enabled' if self.historical_context_provider else 'Disabled'}")
         
         # Log project-specific filtering configuration
         ignore_patterns = self.project_config.get('ignore_patterns', [])
@@ -282,7 +346,7 @@ class AutoGrader:
     def _evaluate_rubric_group_structured(self, assignment_details: str, instructions: str,
                                         codebase_content: str, general_rubric: str,
                                         rubric_group: List[Dict[str, Any]], group_num: int,
-                                        assignment_name: str) -> Dict[str, Any]:
+                                        assignment_name: str, code_files: Dict[str, str]) -> Dict[str, Any]:
         """
         Evaluate a single group of rubric criteria with structured output and detailed logging.
         
@@ -294,6 +358,7 @@ class AutoGrader:
             rubric_group: Group of rubric criteria to evaluate
             group_num: Group number for logging
             assignment_name: Assignment name for file naming
+            code_files: Dictionary of code files for historical context
             
         Returns:
             Structured evaluation result for this group
@@ -301,10 +366,32 @@ class AutoGrader:
         criteria_names = [criterion['criterion_name'] for criterion in rubric_group]
         self.logger.info(f"Processing rubric group {group_num}: {', '.join(criteria_names)}")
         
+        # Generate historical context if available
+        historical_context = ""
+        if self.historical_context_provider:
+            try:
+                faiss_config = self.settings.get_faiss_config()
+                historical_context = self.historical_context_provider.get_context_for_prompt_manager(
+                    code_files=code_files,
+                    assignment_id=faiss_config['assignment_id'],
+                    include_stats=faiss_config['include_assignment_stats'],
+                    include_examples=True,
+                    max_examples=faiss_config['max_examples']
+                )
+                
+                if historical_context.strip():
+                    self.logger.info(f"Generated historical context for group {group_num} ({len(historical_context)} chars)")
+                else:
+                    self.logger.info(f"No historical context generated for group {group_num}")
+                    
+            except Exception as e:
+                self.logger.warning(f"Failed to generate historical context for group {group_num}: {str(e)}")
+                historical_context = ""
+        
         # Create prompt for this group
         prompt = self.prompt_manager.create_rubric_evaluation_prompt(
             assignment_details, instructions, codebase_content,
-            general_rubric, rubric_group
+            general_rubric, rubric_group, historical_context
         )
         
         # Save prompt to extra_logs
@@ -346,6 +433,7 @@ class AutoGrader:
             'evaluations': structured_data['evaluations'],
             'raw_response': raw_response,
             'prompt_tokens': prompt_tokens,
+            'historical_context_used': bool(historical_context.strip()),
             'error': structured_data.get('error')
         }
     
@@ -758,7 +846,8 @@ class AutoGrader:
             'semgrep_enabled': self.semgrep_analyzer is not None,
             'project_config': self.project_config,
             'prompts_directory': str(self.settings.get_prompts_dir()),
-            'extra_logs_directory': str(self.extra_logs_dir)
+            'extra_logs_directory': str(self.extra_logs_dir),
+            'historical_context': 'Enabled' if self.historical_context_provider else 'Disabled'
         }
     
     def _process_semgrep_analysis(self, semgrep_result: Dict[str, Any], 

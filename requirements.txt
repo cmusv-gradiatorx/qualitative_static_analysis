@@ -5,3 +5,13 @@ requests
 tiktoken
 rich
 semgrep
+
+# FAISS-based Historical Context System
+faiss-cpu  # Use faiss-gpu if CUDA available
+numpy
+pandas
+scikit-learn
+networkx
+torch  # Optional: for better embeddings
+transformers  # Optional: for CodeBERT models
+sentence-transformers  # Optional: for easier embedding models

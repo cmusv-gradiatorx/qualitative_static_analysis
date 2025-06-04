@@ -207,7 +207,8 @@ class PromptManager:
     
     def create_rubric_evaluation_prompt(self, assignment_details: str, instructions: str,
                                       codebase_content: str, general_rubric: str,
-                                      rubric_group: List[Dict[str, Any]]) -> str:
+                                      rubric_group: List[Dict[str, Any]], 
+                                      historical_context: str = "") -> str:
         """
         Create a prompt for evaluating a specific group of rubric criteria.
         
@@ -217,6 +218,7 @@ class PromptManager:
             codebase_content: Processed codebase content
             general_rubric: General rubric instructions
             rubric_group: Group of rubric criteria to evaluate
+            historical_context: Optional historical context from similar submissions
             
         Returns:
             Complete prompt for rubric evaluation
@@ -236,7 +238,8 @@ class PromptManager:
         combined_specific_prompt = "\n\n".join(specific_prompts)
         criteria_list = "\n- ".join(criteria_info)
         
-        return f"""You are an expert software engineering instructor grading a graduate-level assignment.
+        # Build the prompt with optional historical context
+        prompt = f"""You are an expert software engineering instructor grading a graduate-level assignment.
 
 **ASSIGNMENT DETAILS:**
 {assignment_details}
@@ -244,6 +247,13 @@ class PromptManager:
 **EVALUATION INSTRUCTIONS:**
 {instructions}
 
+{historical_context}"""
+        
+        # Only add historical context separator if context was provided
+        if historical_context.strip():
+            prompt += "\n"
+        
+        prompt += f"""
 **CODEBASE TO EVALUATE:**
 {codebase_content}
 
@@ -278,10 +288,20 @@ You must respond with a valid JSON object containing evaluations for each criter
 2. Include all criteria from the rubric group
 3. Ensure scores are in the range give in rubric and according to the rubric (0 to max_points)
 4. Provide detailed, constructive feedback
-5. Use exact criterion names as provided in the rubric
+5. Use exact criterion names as provided in the rubric"""
+        
+        # Add instructions for using historical context if provided
+        if historical_context.strip():
+            prompt += """
+6. Consider the historical context provided to ensure consistent scoring with similar past submissions
+7. Use historical examples as calibration points while maintaining fairness"""
+        
+        prompt += """
 
 Evaluate ONLY the criteria specified above and provide your assessment in the exact JSON format requested.
 """
+        
+        return prompt
     
     def create_static_analysis_prompt(self, semgrep_results: Dict[str, Any]) -> str:
         """
