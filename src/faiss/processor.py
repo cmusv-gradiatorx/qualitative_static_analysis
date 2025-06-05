@@ -20,6 +20,13 @@ import numpy as np
 
 from ..utils.logger import get_logger
 
+# Import multi-language analyzer for file extension support
+try:
+    from .analyzers import MultiLanguageCodeAnalyzer
+    MULTI_LANGUAGE_AVAILABLE = True
+except ImportError:
+    MULTI_LANGUAGE_AVAILABLE = False
+
 
 @dataclass
 class Submission:
@@ -48,6 +55,14 @@ class SubmissionProcessor:
         self.assignment_id = assignment_id or self._infer_assignment_id()
         self.submissions = []
         self.logger = get_logger(__name__)
+        
+        # Initialize multi-language analyzer if available
+        if MULTI_LANGUAGE_AVAILABLE:
+            self.analyzer = MultiLanguageCodeAnalyzer()
+            self.supported_extensions = set(self.analyzer.get_supported_extensions())
+        else:
+            self.analyzer = None
+            self.supported_extensions = {'.java'}  # Fallback to Java only
         
         # Validate ZIP file exists
         if not self.zip_path.exists():
@@ -108,10 +123,17 @@ class SubmissionProcessor:
             # Multiple items at root level
             for item in items:
                 if item.is_dir():
-                    self._process_submission_folder(item)
-                elif item.suffix == '.py':
-                    # Single Python file submission
+                    # Skip macOS metadata directories
+                    if item.name.startswith('__MACOSX'):
+                        continue
+                    # Always use directory structure processing for directories
+                    self._process_directory_structure(item)
+                elif item.suffix in self.supported_extensions:
+                    # Single code file submission
                     self._process_single_file_submission(item, extract_dir)
+                elif item.suffix == '.zip':
+                    # Handle ZIP files at root level
+                    self._process_nested_zip(item)
     
     def _process_directory_structure(self, base_dir: Path):
         """Process directory structure to find submissions"""
@@ -124,25 +146,50 @@ class SubmissionProcessor:
                 else:
                     # Recurse into subdirectories
                     self._process_directory_structure(item)
-            elif item.suffix == '.py':
-                # Python file at this level
+            elif item.suffix == '.zip':
+                # Handle nested ZIP files
+                self._process_nested_zip(item)
+            elif item.suffix in self.supported_extensions:
+                # Code file at this level
                 self._process_single_file_submission(item, base_dir)
+    
+    def _process_nested_zip(self, zip_path: Path):
+        """Process a nested ZIP file (student submission)"""
+        self.logger.debug(f"Processing nested ZIP: {zip_path.name}")
+        
+        # Create temporary directory for extraction
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_extract_dir = Path(temp_dir) / f"nested_{zip_path.stem}"
+            temp_extract_dir.mkdir(exist_ok=True)
+            
+            try:
+                # Extract the nested ZIP
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(temp_extract_dir)
+                
+                # Process the extracted contents as a submission folder
+                self._process_submission_folder(temp_extract_dir)
+                
+            except Exception as e:
+                self.logger.warning(f"Failed to process nested ZIP {zip_path.name}: {e}")
     
     def _is_submission_folder(self, folder: Path) -> bool:
         """Check if a folder contains a submission"""
-        # Look for Python files
-        python_files = list(folder.glob('**/*.py'))
-        if python_files:
-            return True
+        # Look for supported code files (Python, Java, etc.)
+        for ext in self.supported_extensions:
+            code_files = list(folder.glob(f'**/*{ext}'))
+            if code_files:
+                return True
         
         # Look for common submission indicators
         submission_indicators = [
             'main.py', 'solution.py', 'assignment.py',
+            'Main.java', 'Solution.java', 'App.java',
             'src', 'code', 'submission'
         ]
         
         for item in folder.iterdir():
-            if item.name.lower() in submission_indicators:
+            if item.name.lower() in [s.lower() for s in submission_indicators]:
                 return True
         
         return False
@@ -165,8 +212,8 @@ class SubmissionProcessor:
             filename = str(relative_path)
             
             # Process different file types
-            if file_path.suffix == '.py':
-                # Python code file
+            if file_path.suffix in self.supported_extensions:
+                # Code file (Python, Java, etc.)
                 try:
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                         code_files[filename] = f.read()
@@ -188,21 +235,21 @@ class SubmissionProcessor:
                 except Exception as e:
                     self.logger.warning(f"Failed to read feedback file {file_path}: {e}")
                     
-            elif file_path.suffix == '.json':
-                # JSON metadata file
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        json_data = json.load(f)
-                        metadata.update(json_data)
+            # elif file_path.suffix == '.json':
+            #     # JSON metadata file
+            #     try:
+            #         with open(file_path, 'r', encoding='utf-8') as f:
+            #             json_data = json.load(f)
+            #             metadata.update(json_data)
                         
-                        # Look for score in JSON
-                        if 'score' in json_data:
-                            score = float(json_data['score'])
-                        elif 'grade' in json_data:
-                            score = float(json_data['grade'])
+            #             # Look for score in JSON
+            #             if 'score' in json_data:
+            #                 score = float(json_data['score'])
+            #             elif 'grade' in json_data:
+            #                 score = float(json_data['grade'])
                             
-                except Exception as e:
-                    self.logger.warning(f"Failed to read JSON file {file_path}: {e}")
+            #     except Exception as e:
+            #         self.logger.warning(f"Failed to read JSON file {file_path}: {e}")
         
         # Create submission if we found code files
         if code_files:
@@ -216,10 +263,16 @@ class SubmissionProcessor:
             )
             self.submissions.append(submission)
         else:
-            self.logger.warning(f"No Python files found in {folder_path.name}")
+            # Create more descriptive warning message
+            supported_exts = ', '.join(self.supported_extensions)
+            self.logger.warning(f"No supported code files ({supported_exts}) found in {folder_path.name}")
     
     def _process_single_file_submission(self, file_path: Path, base_dir: Path):
-        """Process a single Python file as a submission"""
+        """Process a single code file as a submission"""
+        # Check if it's a supported file type
+        if file_path.suffix not in self.supported_extensions:
+            return
+            
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()

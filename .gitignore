@@ -107,3 +107,9 @@ config.env
 # Requirements
 ################################################################################
 Requirements.md
+
+src/faiss/data/
+
+faiss_performance_evaluation*
+
+src/faiss/assignment_index/

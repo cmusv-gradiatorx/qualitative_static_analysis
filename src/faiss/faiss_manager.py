@@ -2,7 +2,7 @@
 FAISS Vector Database Manager
 
 This module manages the FAISS vector database for similarity search
-of historical code submissions.
+of historical code submissions with enhanced similarity calculation.
 
 Author: Auto-generated
 """
@@ -27,15 +27,17 @@ from ..utils.logger import get_logger
 
 
 class FAISSManager:
-    """Manage FAISS index for similarity search"""
+    """Manage FAISS index for similarity search with enhanced similarity calculation"""
     
-    def __init__(self, embedding_dim: Optional[int] = None, index_type: str = "flat"):
+    def __init__(self, embedding_dim: Optional[int] = None, index_type: str = "flat", 
+                 use_enhanced_similarity: bool = True):
         """
         Initialize FAISS manager.
         
         Args:
             embedding_dim: Dimension of embeddings (determined automatically if None)
             index_type: Type of FAISS index ("flat", "ivf", "hnsw")
+            use_enhanced_similarity: Whether to use enhanced similarity for re-ranking
         """
         self.logger = get_logger(__name__)
         
@@ -47,8 +49,10 @@ class FAISSManager:
         self.index = None
         self.submissions_metadata = []
         self.is_trained = False
+        self.use_enhanced_similarity = use_enhanced_similarity
         
-        self.logger.info(f"FAISS manager initialized with index type: {index_type}")
+        self.logger.info(f"FAISS manager initialized with index type: {index_type}, "
+                        f"enhanced similarity: {use_enhanced_similarity}")
     
     def build_index(self, submissions: List[Submission], embedder: HybridCodeEmbedder, 
                    save_path: Optional[str] = None) -> Dict[str, Any]:
@@ -164,15 +168,21 @@ class FAISSManager:
         return index
     
     def search_similar(self, query_embedding: np.ndarray, assignment_id: Optional[str] = None, 
-                      top_k: int = 5, score_threshold: float = 0.0) -> List[Dict[str, Any]]:
+                      top_k: int = 5, score_threshold: float = 0.0, 
+                      embedder: Optional[HybridCodeEmbedder] = None,
+                      query_metadata: Optional[Dict] = None,
+                      use_enhanced_reranking: bool = True) -> List[Dict[str, Any]]:
         """
-        Search for similar submissions.
+        Search for similar submissions with enhanced similarity calculation.
         
         Args:
             query_embedding: Query embedding vector
             assignment_id: Filter by assignment ID (None for all assignments)
             top_k: Number of top results to return
             score_threshold: Minimum similarity score threshold
+            embedder: Code embedder for enhanced similarity (required for enhanced features)
+            query_metadata: Optional metadata for enhanced similarity
+            use_enhanced_reranking: Whether to use enhanced similarity for re-ranking
             
         Returns:
             List of similar submissions with metadata
@@ -184,42 +194,140 @@ class FAISSManager:
         query_embedding = query_embedding.reshape(1, -1).astype(np.float32)
         faiss.normalize_L2(query_embedding)
         
-        # Search in FAISS - get more results for filtering
-        search_k = min(len(self.submissions_metadata), max(top_k * 3, 50))
+        # Search in FAISS - get more results for enhanced re-ranking
+        if use_enhanced_reranking and embedder and self.use_enhanced_similarity:
+            search_k = min(len(self.submissions_metadata), max(top_k * 5, 100))
+        else:
+            search_k = min(len(self.submissions_metadata), max(top_k * 3, 50))
+            
         scores, indices = self.index.search(query_embedding, search_k)
         
         # Process results
-        results = []
+        candidates = []
         for score, idx in zip(scores[0], indices[0]):
             if idx >= len(self.submissions_metadata) or idx < 0:
                 continue
                 
             submission = self.submissions_metadata[idx]
             
-            # Apply filters
+            # Apply assignment filter
             if assignment_id and submission.assignment_id != assignment_id:
                 continue
                 
+            # Basic score threshold
             if float(score) < score_threshold:
                 continue
+                
+            candidates.append({
+                'submission': submission,
+                'faiss_score': float(score),
+                'index': int(idx)
+            })
+        
+        # Enhanced re-ranking if enabled and embedder is provided
+        if use_enhanced_reranking and embedder and self.use_enhanced_similarity and candidates:
+            self.logger.debug(f"Re-ranking {len(candidates)} candidates with enhanced similarity")
+            
+            # Collect candidate embeddings and metadata
+            candidate_embeddings = []
+            candidate_metadata_list = []
+            
+            for candidate in candidates:
+                submission = candidate['submission']
+                if hasattr(submission, 'embedding') and submission.embedding is not None:
+                    candidate_embeddings.append(submission.embedding)
+                    
+                    # Extract metadata for enhanced similarity
+                    metadata = self._extract_submission_metadata(submission)
+                    candidate_metadata_list.append(metadata)
+                else:
+                    # Skip candidates without embeddings
+                    continue
+            
+            if candidate_embeddings:
+                # Calculate enhanced similarities
+                enhanced_scores = embedder.batch_enhanced_similarity(
+                    query_embedding.flatten(),
+                    candidate_embeddings,
+                    query_metadata,
+                    candidate_metadata_list
+                )
+                
+                # Update scores and re-sort
+                for i, enhanced_score in enumerate(enhanced_scores):
+                    if i < len(candidates):
+                        candidates[i]['enhanced_score'] = enhanced_score
+                        # Combine FAISS score and enhanced score
+                        candidates[i]['final_score'] = 0.3 * candidates[i]['faiss_score'] + 0.7 * enhanced_score
+                
+                # Sort by enhanced score
+                candidates.sort(key=lambda x: x.get('final_score', x['faiss_score']), reverse=True)
+                self.logger.debug("Enhanced re-ranking completed")
+        
+        # Return top results
+        results = []
+        for candidate in candidates[:top_k]:
+            submission = candidate['submission']
+            
+            # Extract student ID from file name if possible
+            student_id = submission.file_name
+            # Try to extract a cleaner student ID from the file name
+            if '_' in submission.file_name:
+                parts = submission.file_name.split('_')
+                if len(parts) >= 2:
+                    student_id = parts[0]  # First part is usually student identifier
             
             result = {
-                'submission': submission,
-                'similarity_score': float(score),
-                'file_name': submission.file_name,
+                'submission_id': student_id,
                 'assignment_id': submission.assignment_id,
+                'file_name': submission.file_name,
                 'score': submission.score,
-                'feedback': submission.feedback,
-                'metadata': submission.metadata or {}
+                'similarity_score': candidate.get('final_score', candidate['faiss_score']),
+                'faiss_score': candidate['faiss_score'],
+                'submission': submission
             }
             
+            # Add enhanced score if available
+            if 'enhanced_score' in candidate:
+                result['enhanced_score'] = candidate['enhanced_score']
+                
             results.append(result)
-            
-            if len(results) >= top_k:
-                break
         
-        self.logger.debug(f"Found {len(results)} similar submissions for assignment {assignment_id}")
         return results
+    
+    def _extract_submission_metadata(self, submission: Submission) -> Dict[str, Any]:
+        """Extract metadata from submission for enhanced similarity"""
+        try:
+            # Extract basic metadata
+            metadata = {
+                'assignment_id': submission.assignment_id,
+                'score': submission.score,
+                'num_files': len(submission.code_files),
+                'primary_language': 'unknown'
+            }
+            
+            # Detect primary language from file extensions
+            extensions = [Path(f).suffix.lower() for f in submission.code_files.keys()]
+            if extensions:
+                ext_counts = {}
+                for ext in extensions:
+                    ext_counts[ext] = ext_counts.get(ext, 0) + 1
+                primary_ext = max(ext_counts.items(), key=lambda x: x[1])[0]
+                
+                # Map extension to language
+                lang_map = {'.py': 'python', '.java': 'java', '.js': 'javascript', 
+                           '.ts': 'typescript', '.cpp': 'cpp', '.c': 'c'}
+                metadata['primary_language'] = lang_map.get(primary_ext, 'unknown')
+            
+            # Add more metadata if available from submission
+            if hasattr(submission, 'additional_metrics'):
+                metadata.update(submission.additional_metrics)
+                
+            return metadata
+            
+        except Exception as e:
+            self.logger.warning(f"Error extracting submission metadata: {e}")
+            return {'assignment_id': getattr(submission, 'assignment_id', 'unknown')}
     
     def get_assignment_submissions(self, assignment_id: str) -> List[Submission]:
         """Get all submissions for a specific assignment"""
