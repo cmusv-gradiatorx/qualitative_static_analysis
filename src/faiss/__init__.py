@@ -20,6 +20,14 @@ from .faiss_manager import FAISSManager
 from .assignment_faiss_manager import AssignmentFAISSManager
 from .historical_context import HistoricalContextProvider
 
+# Import AST analyzer if available
+try:
+    from .analyzers.ast_java_analyzer import ASTJavaAnalyzer
+    AST_ANALYZER_AVAILABLE = True
+except ImportError:
+    ASTJavaAnalyzer = None
+    AST_ANALYZER_AVAILABLE = False
+
 __all__ = [
     # Core embedding and processing
     'JavaCodeEmbedder',
@@ -34,6 +42,10 @@ __all__ = [
     
     # Historical context interface
     'HistoricalContextProvider',
+    
+    # AST analysis
+    'ASTJavaAnalyzer',
+    'AST_ANALYZER_AVAILABLE',
 ]
 
 __version__ = "3.0.0"

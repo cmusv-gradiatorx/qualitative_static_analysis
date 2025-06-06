@@ -467,7 +467,7 @@ def main():
     parser.add_argument(
         "--model-name",
         type=str,
-        default="deepseek-coder-v2:16b",
+        default="starCoder2:15b",
         help="Ollama model name for embeddings"
     )
     
@@ -488,7 +488,7 @@ def main():
     parser.add_argument(
         "--top-k",
         type=int,
-        default=10,
+        default=5,
         help="Number of top results to retrieve for each query"
     )
     

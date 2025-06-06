@@ -112,4 +112,4 @@ src/faiss/data/
 
 faiss_performance_evaluation*
 
-src/faiss/assignment_index/*
+src/faiss/assignment_indices/*

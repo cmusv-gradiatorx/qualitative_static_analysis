@@ -13,7 +13,7 @@ import torch
 import os
 import requests
 import json
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from pathlib import Path
 import logging
 import re
@@ -27,6 +27,13 @@ except ImportError:
     logging.warning("transformers not available. Install with: pip install transformers")
 
 from ..utils.logger import get_logger
+
+# Import the enhanced AST analyzer
+try:
+    from .analyzers.ast_java_analyzer import ASTJavaAnalyzer
+    AST_ANALYZER_AVAILABLE = True
+except ImportError:
+    AST_ANALYZER_AVAILABLE = False
 
 
 @dataclass
@@ -61,6 +68,14 @@ class OllamaJavaCodeEmbedder:
         
         # Set embedding dimension based on model
         self.embedding_dim = self._get_embedding_dimension()
+        
+        # Initialize AST analyzer for enhanced code analysis
+        if AST_ANALYZER_AVAILABLE:
+            self.ast_analyzer = ASTJavaAnalyzer()
+            self.logger.info("AST-based code analysis enabled")
+        else:
+            self.ast_analyzer = None
+            self.logger.warning("AST analyzer not available - using basic analysis")
         
         # Test connection
         self._test_ollama_connection()
@@ -117,13 +132,13 @@ class OllamaJavaCodeEmbedder:
 
     def embed_codebase(self, code_files: Dict[str, str]) -> np.ndarray:
         """
-        Generate embeddings for Java codebase using Ollama.
+        Generate embeddings for Java codebase using Ollama with enhanced AST analysis.
         
         Args:
             code_files: Dictionary mapping filenames to content
             
         Returns:
-            Numpy array containing the codebase embedding
+            Numpy array containing the enhanced codebase embedding
         """
         # Filter to Java files only
         java_files = self._filter_java_files(code_files)
@@ -132,8 +147,8 @@ class OllamaJavaCodeEmbedder:
             self.logger.warning("No Java files found in codebase")
             return self._get_zero_embedding()
         
-        # Prepare code for embedding
-        processed_code = self._prepare_java_code(java_files)
+        # Enhanced code preparation with AST analysis
+        processed_code = self._prepare_java_code_enhanced(java_files)
         
         # Generate embedding using Ollama
         embedding = self._generate_ollama_embedding(processed_code)
@@ -181,6 +196,138 @@ class OllamaJavaCodeEmbedder:
             combined_code = self._smart_truncate(combined_code)
         
         return combined_code
+    
+    def _prepare_java_code_enhanced(self, java_files: Dict[str, str]) -> str:
+        """
+        Enhanced Java code preparation with AST analysis and structural insights.
+        
+        Args:
+            java_files: Dictionary of Java files
+            
+        Returns:
+            Enhanced processed code string with structural context
+        """
+        if not self.ast_analyzer:
+            # Fallback to regular preparation if AST analyzer unavailable
+            return self._prepare_java_code(java_files)
+        
+        # Analyze all files for structural insights
+        structural_summary = self._extract_structural_summary(java_files)
+        
+        code_parts = []
+        
+        # Add structural summary at the beginning
+        if structural_summary:
+            code_parts.append(f"// CODEBASE STRUCTURAL SUMMARY:\n{structural_summary}\n")
+        
+        # Process files with enhanced context
+        for filename, content in java_files.items():
+            try:
+                # Perform AST analysis on this file
+                file_analysis = self.ast_analyzer.analyze_file(content, filename)
+                
+                # Create enhanced file header with structural info
+                file_header = self._create_enhanced_file_header(filename, file_analysis)
+                
+                # Clean the code content
+                cleaned_content = self._clean_java_code(content)
+                
+                # Combine enhanced header with code
+                enhanced_file = f"{file_header}\n{cleaned_content}"
+                code_parts.append(enhanced_file)
+                
+            except Exception as e:
+                self.logger.warning(f"AST analysis failed for {filename}: {e}")
+                # Fallback to regular processing for this file
+                cleaned_content = self._clean_java_code(content)
+                code_parts.append(f"// FILE: {filename}\n{cleaned_content}")
+        
+        # Combine all parts
+        combined_code = "\n\n// ===== NEXT FILE =====\n\n".join(code_parts)
+        
+        # Truncate if too long (AST info might make it longer)
+        if len(combined_code) > self.config.max_length * 4:
+            self.logger.debug("Enhanced code too long, truncating...")
+            combined_code = self._smart_truncate(combined_code)
+        
+        return combined_code
+    
+    def _extract_structural_summary(self, java_files: Dict[str, str]) -> str:
+        """Extract high-level structural summary of the codebase"""
+        if not self.ast_analyzer:
+            return ""
+        
+        total_classes = 0
+        total_methods = 0
+        total_complexity = 0
+        design_patterns = set()
+        key_apis = set()
+        
+        for filename, content in java_files.items():
+            try:
+                analysis = self.ast_analyzer.analyze_file(content, filename)
+                
+                # Aggregate metrics
+                total_classes += analysis.get('class_analysis', {}).get('total_classes', 0)
+                total_methods += analysis.get('method_analysis', {}).get('total_methods', 0)
+                total_complexity += analysis.get('complexity_indicators', {}).get('cyclomatic_complexity', 0)
+                
+                # Collect design patterns
+                patterns = analysis.get('design_patterns', {})
+                for pattern, count in patterns.items():
+                    if count > 0:
+                        design_patterns.add(pattern)
+                
+                # Collect key API calls
+                api_calls = analysis.get('unique_elements', {}).get('api_calls', [])
+                key_apis.update(api_calls[:5])  # Top 5 API calls per file
+                
+            except Exception:
+                continue
+        
+        summary_parts = []
+        summary_parts.append(f"Classes: {total_classes}, Methods: {total_methods}")
+        summary_parts.append(f"Total Complexity: {total_complexity}")
+        
+        if design_patterns:
+            summary_parts.append(f"Design Patterns: {', '.join(list(design_patterns)[:3])}")
+        
+        if key_apis:
+            summary_parts.append(f"Key APIs: {', '.join(list(key_apis)[:5])}")
+        
+        return " | ".join(summary_parts)
+    
+    def _create_enhanced_file_header(self, filename: str, file_analysis: Dict[str, Any]) -> str:
+        """Create enhanced file header with structural metadata"""
+        header_parts = [f"// FILE: {filename}"]
+        
+        # Add structural fingerprints
+        fingerprints = file_analysis.get('fingerprints', {})
+        if fingerprints:
+            header_parts.append(f"// STRUCTURAL_ID: {fingerprints.get('combined_hash', 'unknown')}")
+        
+        # Add key metrics
+        class_info = file_analysis.get('class_analysis', {})
+        method_info = file_analysis.get('method_analysis', {})
+        
+        if class_info.get('total_classes', 0) > 0:
+            header_parts.append(f"// CLASSES: {class_info['total_classes']}")
+        
+        if method_info.get('total_methods', 0) > 0:
+            header_parts.append(f"// METHODS: {method_info['total_methods']}")
+        
+        # Add complexity indicator
+        complexity = file_analysis.get('complexity_indicators', {}).get('cyclomatic_complexity', 0)
+        if complexity > 0:
+            header_parts.append(f"// COMPLEXITY: {complexity}")
+        
+        # Add design patterns if present
+        patterns = file_analysis.get('design_patterns', {})
+        active_patterns = [p for p, c in patterns.items() if c > 0]
+        if active_patterns:
+            header_parts.append(f"// PATTERNS: {', '.join(active_patterns[:2])}")
+        
+        return "\n".join(header_parts)
     
     def _clean_java_code(self, content: str) -> str:
         """Clean Java code content"""
@@ -315,14 +462,14 @@ This code represents a complete Java implementation."""
     
     def calculate_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
         """
-        Calculate cosine similarity between two embeddings with proper bounds and penalty.
+        Calculate enhanced cosine similarity between two embeddings with AST-aware enhancements.
         
         Args:
             embedding1: First embedding vector
             embedding2: Second embedding vector
             
         Returns:
-            Similarity score between 0.0 and 1.0
+            Enhanced similarity score between 0.0 and 1.0
         """
         # Ensure embeddings are normalized
         embedding1 = embedding1 / (np.linalg.norm(embedding1) + 1e-8)
@@ -334,17 +481,123 @@ This code represents a complete Java implementation."""
         # Clamp to [0, 1] range to handle floating point precision errors
         similarity = np.clip(similarity, 0.0, 1.0)
         
-        # Add strong penalty for code differences to reduce clustering near 1.0
-        # Apply a stronger power function to spread out high similarities more aggressively
-        similarity = similarity ** 5  # Stronger penalty: 0.99^5 = .95, 0.95^3.5 ≈ 0..77
+        # Enhanced penalty function that better spreads out similarities
+        # Use a more aggressive power function to create more distinction
+        similarity = similarity ** 4  # More aggressive penalty: 0.99^4 ≈ 0.96, 0.95^4 ≈ 0.81
         
-        # Add small amount of controlled noise to further differentiate near-identical scores
-        # But only if similarity is very high to avoid affecting genuinely different code
-        if similarity > 0.85:
-            noise = np.random.normal(0, 0.02)  # Small Gaussian noise
+        # Add controlled noise for very high similarities to avoid clustering
+        if similarity > 0.9:
+            noise = np.random.normal(0, 0.015)  # Reduced noise for AST-enhanced embeddings
             similarity = np.clip(similarity + noise, 0.0, 1.0)
         
         return float(similarity)
+    
+    def calculate_structural_similarity(self, code_files1: Dict[str, str], 
+                                      code_files2: Dict[str, str]) -> float:
+        """
+        Calculate structural similarity using AST fingerprints (complementary to embedding similarity).
+        
+        Args:
+            code_files1: First codebase files
+            code_files2: Second codebase files
+            
+        Returns:
+            Structural similarity score between 0.0 and 1.0
+        """
+        if not self.ast_analyzer:
+            return 0.0  # No structural analysis available
+        
+        try:
+            # Analyze both codebases
+            fingerprints1 = self._extract_codebase_fingerprints(code_files1)
+            fingerprints2 = self._extract_codebase_fingerprints(code_files2)
+            
+            # Compare structural elements
+            structural_sim = self._compare_structural_fingerprints(fingerprints1, fingerprints2)
+            
+            return structural_sim
+            
+        except Exception as e:
+            self.logger.warning(f"Structural similarity calculation failed: {e}")
+            return 0.0
+    
+    def _extract_codebase_fingerprints(self, code_files: Dict[str, str]) -> Dict[str, Any]:
+        """Extract structural fingerprints from a codebase"""
+        all_class_names = set()
+        all_method_names = set()
+        all_api_calls = set()
+        all_fingerprints = []
+        total_complexity = 0
+        design_patterns = set()
+        
+        for filename, content in code_files.items():
+            if not filename.lower().endswith('.java'):
+                continue
+                
+            try:
+                analysis = self.ast_analyzer.analyze_file(content, filename)
+                
+                # Collect unique elements
+                unique_elements = analysis.get('unique_elements', {})
+                all_class_names.update(unique_elements.get('class_names', []))
+                all_method_names.update(unique_elements.get('method_names', []))
+                all_api_calls.update(unique_elements.get('api_calls', []))
+                
+                # Collect fingerprints
+                fingerprints = analysis.get('fingerprints', {})
+                if 'combined_hash' in fingerprints:
+                    all_fingerprints.append(fingerprints['combined_hash'])
+                
+                # Accumulate complexity
+                total_complexity += analysis.get('complexity_indicators', {}).get('cyclomatic_complexity', 0)
+                
+                # Collect design patterns
+                patterns = analysis.get('design_patterns', {})
+                for pattern, count in patterns.items():
+                    if count > 0:
+                        design_patterns.add(pattern)
+                        
+            except Exception:
+                continue
+        
+        return {
+            'class_names': all_class_names,
+            'method_names': all_method_names,
+            'api_calls': all_api_calls,
+            'fingerprints': all_fingerprints,
+            'total_complexity': total_complexity,
+            'design_patterns': design_patterns
+        }
+    
+    def _compare_structural_fingerprints(self, fp1: Dict[str, Any], fp2: Dict[str, Any]) -> float:
+        """Compare structural fingerprints to calculate similarity"""
+        similarities = []
+        
+        # Class name similarity
+        classes1, classes2 = fp1['class_names'], fp2['class_names']
+        if classes1 or classes2:
+            class_sim = len(classes1 & classes2) / max(len(classes1 | classes2), 1)
+            similarities.append(class_sim * 0.3)  # 30% weight
+        
+        # Method name similarity
+        methods1, methods2 = fp1['method_names'], fp2['method_names']
+        if methods1 or methods2:
+            method_sim = len(methods1 & methods2) / max(len(methods1 | methods2), 1)
+            similarities.append(method_sim * 0.25)  # 25% weight
+        
+        # API usage similarity
+        apis1, apis2 = fp1['api_calls'], fp2['api_calls']
+        if apis1 or apis2:
+            api_sim = len(apis1 & apis2) / max(len(apis1 | apis2), 1)
+            similarities.append(api_sim * 0.25)  # 25% weight
+        
+        # Design pattern similarity
+        patterns1, patterns2 = fp1['design_patterns'], fp2['design_patterns']
+        if patterns1 or patterns2:
+            pattern_sim = len(patterns1 & patterns2) / max(len(patterns1 | patterns2), 1)
+            similarities.append(pattern_sim * 0.2)  # 20% weight
+        
+        return sum(similarities) if similarities else 0.0
     
     def batch_similarity(self, query_embedding: np.ndarray, 
                         candidate_embeddings: List[np.ndarray]) -> List[float]:
@@ -388,6 +641,14 @@ class JavaCodeEmbedder:
         self.model = None
         self.tokenizer = None
         self.embedding_dim = None
+        
+        # Initialize AST analyzer for enhanced code analysis
+        if AST_ANALYZER_AVAILABLE:
+            self.ast_analyzer = ASTJavaAnalyzer()
+            self.logger.info("AST-based code analysis enabled")
+        else:
+            self.ast_analyzer = None
+            self.logger.warning("AST analyzer not available - using basic analysis")
         
         self._initialize_model()
         
@@ -469,8 +730,8 @@ class JavaCodeEmbedder:
             self.logger.warning("No Java files found in codebase")
             return self._get_zero_embedding()
         
-        # Prepare code for embedding
-        processed_code = self._prepare_java_code(java_files)
+        # Enhanced code preparation with AST analysis
+        processed_code = self._prepare_java_code_enhanced(java_files) if self.ast_analyzer else self._prepare_java_code(java_files)
         
         # Generate embedding
         embedding = self._generate_embedding(processed_code)
@@ -707,6 +968,182 @@ class JavaCodeEmbedder:
             similarities.append(similarity)
         
         return similarities
+    
+    # Add the same enhanced methods as OllamaJavaCodeEmbedder
+    def _prepare_java_code_enhanced(self, java_files: Dict[str, str]) -> str:
+        """Enhanced Java code preparation with AST analysis (same as Ollama version)"""
+        if not self.ast_analyzer:
+            return self._prepare_java_code(java_files)
+        
+        # Use the same enhanced logic as OllamaJavaCodeEmbedder
+        structural_summary = self._extract_structural_summary(java_files)
+        
+        code_parts = []
+        if structural_summary:
+            code_parts.append(f"// CODEBASE STRUCTURAL SUMMARY:\n{structural_summary}\n")
+        
+        for filename, content in java_files.items():
+            try:
+                file_analysis = self.ast_analyzer.analyze_file(content, filename)
+                file_header = self._create_enhanced_file_header(filename, file_analysis)
+                cleaned_content = self._clean_java_code(content)
+                enhanced_file = f"{file_header}\n{cleaned_content}"
+                code_parts.append(enhanced_file)
+            except Exception as e:
+                self.logger.warning(f"AST analysis failed for {filename}: {e}")
+                cleaned_content = self._clean_java_code(content)
+                code_parts.append(f"// FILE: {filename}\n{cleaned_content}")
+        
+        combined_code = "\n\n// ===== NEXT FILE =====\n\n".join(code_parts)
+        
+        if len(combined_code) > self.config.max_length * 4:
+            self.logger.debug("Enhanced code too long, truncating...")
+            combined_code = self._smart_truncate(combined_code)
+        
+        return combined_code
+    
+    def _extract_structural_summary(self, java_files: Dict[str, str]) -> str:
+        """Extract structural summary (same logic as Ollama version)"""
+        if not self.ast_analyzer:
+            return ""
+        
+        total_classes = total_methods = total_complexity = 0
+        design_patterns = set()
+        key_apis = set()
+        
+        for filename, content in java_files.items():
+            try:
+                analysis = self.ast_analyzer.analyze_file(content, filename)
+                total_classes += analysis.get('class_analysis', {}).get('total_classes', 0)
+                total_methods += analysis.get('method_analysis', {}).get('total_methods', 0)
+                total_complexity += analysis.get('complexity_indicators', {}).get('cyclomatic_complexity', 0)
+                
+                patterns = analysis.get('design_patterns', {})
+                for pattern, count in patterns.items():
+                    if count > 0:
+                        design_patterns.add(pattern)
+                
+                api_calls = analysis.get('unique_elements', {}).get('api_calls', [])
+                key_apis.update(api_calls[:5])
+            except Exception:
+                continue
+        
+        summary_parts = [f"Classes: {total_classes}, Methods: {total_methods}",
+                        f"Total Complexity: {total_complexity}"]
+        if design_patterns:
+            summary_parts.append(f"Design Patterns: {', '.join(list(design_patterns)[:3])}")
+        if key_apis:
+            summary_parts.append(f"Key APIs: {', '.join(list(key_apis)[:5])}")
+        
+        return " | ".join(summary_parts)
+    
+    def _create_enhanced_file_header(self, filename: str, file_analysis: Dict[str, Any]) -> str:
+        """Create enhanced file header (same logic as Ollama version)"""
+        header_parts = [f"// FILE: {filename}"]
+        
+        fingerprints = file_analysis.get('fingerprints', {})
+        if fingerprints:
+            header_parts.append(f"// STRUCTURAL_ID: {fingerprints.get('combined_hash', 'unknown')}")
+        
+        class_info = file_analysis.get('class_analysis', {})
+        method_info = file_analysis.get('method_analysis', {})
+        
+        if class_info.get('total_classes', 0) > 0:
+            header_parts.append(f"// CLASSES: {class_info['total_classes']}")
+        if method_info.get('total_methods', 0) > 0:
+            header_parts.append(f"// METHODS: {method_info['total_methods']}")
+        
+        complexity = file_analysis.get('complexity_indicators', {}).get('cyclomatic_complexity', 0)
+        if complexity > 0:
+            header_parts.append(f"// COMPLEXITY: {complexity}")
+        
+        patterns = file_analysis.get('design_patterns', {})
+        active_patterns = [p for p, c in patterns.items() if c > 0]
+        if active_patterns:
+            header_parts.append(f"// PATTERNS: {', '.join(active_patterns[:2])}")
+        
+        return "\n".join(header_parts)
+    
+    def calculate_structural_similarity(self, code_files1: Dict[str, str], 
+                                      code_files2: Dict[str, str]) -> float:
+        """Calculate structural similarity (same logic as Ollama version)"""
+        if not self.ast_analyzer:
+            return 0.0
+        
+        try:
+            fingerprints1 = self._extract_codebase_fingerprints(code_files1)
+            fingerprints2 = self._extract_codebase_fingerprints(code_files2)
+            return self._compare_structural_fingerprints(fingerprints1, fingerprints2)
+        except Exception as e:
+            self.logger.warning(f"Structural similarity calculation failed: {e}")
+            return 0.0
+    
+    def _extract_codebase_fingerprints(self, code_files: Dict[str, str]) -> Dict[str, Any]:
+        """Extract codebase fingerprints (same logic as Ollama version)"""
+        all_class_names = set()
+        all_method_names = set()
+        all_api_calls = set()
+        all_fingerprints = []
+        total_complexity = 0
+        design_patterns = set()
+        
+        for filename, content in code_files.items():
+            if not filename.lower().endswith('.java'):
+                continue
+            try:
+                analysis = self.ast_analyzer.analyze_file(content, filename)
+                unique_elements = analysis.get('unique_elements', {})
+                all_class_names.update(unique_elements.get('class_names', []))
+                all_method_names.update(unique_elements.get('method_names', []))
+                all_api_calls.update(unique_elements.get('api_calls', []))
+                
+                fingerprints = analysis.get('fingerprints', {})
+                if 'combined_hash' in fingerprints:
+                    all_fingerprints.append(fingerprints['combined_hash'])
+                
+                total_complexity += analysis.get('complexity_indicators', {}).get('cyclomatic_complexity', 0)
+                
+                patterns = analysis.get('design_patterns', {})
+                for pattern, count in patterns.items():
+                    if count > 0:
+                        design_patterns.add(pattern)
+            except Exception:
+                continue
+        
+        return {
+            'class_names': all_class_names,
+            'method_names': all_method_names,
+            'api_calls': all_api_calls,
+            'fingerprints': all_fingerprints,
+            'total_complexity': total_complexity,
+            'design_patterns': design_patterns
+        }
+    
+    def _compare_structural_fingerprints(self, fp1: Dict[str, Any], fp2: Dict[str, Any]) -> float:
+        """Compare structural fingerprints (same logic as Ollama version)"""
+        similarities = []
+        
+        classes1, classes2 = fp1['class_names'], fp2['class_names']
+        if classes1 or classes2:
+            class_sim = len(classes1 & classes2) / max(len(classes1 | classes2), 1)
+            similarities.append(class_sim * 0.3)
+        
+        methods1, methods2 = fp1['method_names'], fp2['method_names']
+        if methods1 or methods2:
+            method_sim = len(methods1 & methods2) / max(len(methods1 | methods2), 1)
+            similarities.append(method_sim * 0.25)
+        
+        apis1, apis2 = fp1['api_calls'], fp2['api_calls']
+        if apis1 or apis2:
+            api_sim = len(apis1 & apis2) / max(len(apis1 | apis2), 1)
+            similarities.append(api_sim * 0.25)
+        
+        patterns1, patterns2 = fp1['design_patterns'], fp2['design_patterns']
+        if patterns1 or patterns2:
+            pattern_sim = len(patterns1 & patterns2) / max(len(patterns1 | patterns2), 1)
+            similarities.append(pattern_sim * 0.2)
+        
+        return sum(similarities) if similarities else 0.0
 
 
 # Factory function for easy initialization with Ollama support
