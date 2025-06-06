@@ -1,29 +1,23 @@
 """
-Hybrid Code Embedding System
+Java Code Embedder using StarCoder2 or Ollama
 
-This module provides multi-layer code embeddings that combine:
-1. Semantic embeddings (CodeBERT-based)
-2. Structural metrics (AST-based)
-3. Dependency graph features (NetworkX-based)
-4. Enhanced similarity calculation with component weighting
+A clean, simple code embedder focused on Java programming language using StarCoder2 model
+or Ollama API endpoints. Removes all structural/dependency analysis and focuses purely 
+on semantic code embeddings.
 
 Author: Auto-generated
 """
 
 import numpy as np
 import torch
-from typing import Dict, List, Optional, Tuple
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+import os
+import requests
+import json
+from typing import Dict, List, Optional
+from pathlib import Path
 import logging
 import re
-import hashlib
-
-try:
-    from sentence_transformers import SentenceTransformer
-    SENTENCE_TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    SENTENCE_TRANSFORMERS_AVAILABLE = False
-    logging.warning("sentence-transformers not available. Install with: pip install sentence-transformers")
+from dataclasses import dataclass
 
 try:
     from transformers import AutoTokenizer, AutoModel
@@ -32,869 +26,727 @@ except ImportError:
     TRANSFORMERS_AVAILABLE = False
     logging.warning("transformers not available. Install with: pip install transformers")
 
-# Import multi-language analyzers
-try:
-    from .analyzers import MultiLanguageCodeAnalyzer, MultiLanguageDependencyGraphBuilder
-    MULTI_LANG_AVAILABLE = True
-except ImportError:
-    # Fallback to original analyzer
-    try:
-        from .analyzer import CodeStructureAnalyzer, DependencyGraphBuilder
-        MULTI_LANG_AVAILABLE = False
-    except ImportError:
-        # Neither available
-        MULTI_LANG_AVAILABLE = None
-
-# Import enhanced similarity calculator
-from .similarity_enhancer import SimilarityEnhancer
 from ..utils.logger import get_logger
 
 
-class ImprovedCodeEmbedder:
-    """Improved embedding system with enhanced similarity detection and component weighting"""
+@dataclass
+class EmbedderConfig:
+    """Configuration for the Java code embedder"""
+    model_name: str = "starcoder2:3b"  # Default to Ollama StarCoder2
+    use_ollama: bool = True  # Use Ollama API by default
+    ollama_base_url: str = "http://localhost:11434"  # Default Ollama URL
+    device: Optional[str] = None  # Auto-detect if None (for transformers)
+    max_length: int = 8192  # Maximum sequence length (Ollama models support more)
+    java_only: bool = True  # Only process Java files
+    normalize_embeddings: bool = True  # L2 normalize embeddings
+    batch_size: int = 1  # Batch size for processing
+
+
+class OllamaJavaCodeEmbedder:
+    """Fast Java code embedder using Ollama API"""
     
-    def __init__(self, model_name: str = 'microsoft/codebert-base', device: Optional[str] = None):
+    def __init__(self, config: Optional[EmbedderConfig] = None):
         """
-        Initialize the improved code embedder with enhanced similarity.
+        Initialize the Ollama Java code embedder.
         
         Args:
-            model_name: Name of the model to use for semantic embeddings
-            device: Device to run models on ('cpu', 'cuda', or None for auto)
+            config: Embedder configuration (uses default if None)
         """
+        self.config = config or EmbedderConfig()
         self.logger = get_logger(__name__)
         
-        # Choose better default models for code
-        if model_name == 'microsoft/unixcoder-base':
-            # Use a better model for code similarity
-            model_name = 'microsoft/codebert-base'
-            self.logger.info("Switching to CodeBERT for better code understanding")
+        # Load from environment if available
+        if 'OLLAMA_BASE_URL' in os.environ:
+            self.config.ollama_base_url = os.environ['OLLAMA_BASE_URL']
         
-        self.model_name = model_name
-        self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+        # Set embedding dimension based on model
+        self.embedding_dim = self._get_embedding_dimension()
         
-        # Initialize models
-        self.code_model = None
-        self.tokenizer = None
-        self._initialize_models()
+        # Test connection
+        self._test_ollama_connection()
         
-        # Initialize enhanced similarity calculator
-        self.similarity_enhancer = SimilarityEnhancer()
-        self.logger.info("Enhanced similarity calculator initialized")
-        
-        # Initialize analyzers
-        if MULTI_LANG_AVAILABLE:
-            self.structure_analyzer = MultiLanguageCodeAnalyzer()
-            self.graph_builder = MultiLanguageDependencyGraphBuilder()
-        elif MULTI_LANG_AVAILABLE is False:
-            from .analyzer import CodeStructureAnalyzer, DependencyGraphBuilder
-            self.structure_analyzer = CodeStructureAnalyzer()
-            self.graph_builder = DependencyGraphBuilder()
-        else:
-            self.structure_analyzer = None
-            self.graph_builder = None
-            self.logger.warning("No code analyzers available")
-        
-        # Initialize scalers
-        self.structure_scaler = StandardScaler()
-        self.graph_scaler = StandardScaler() 
-        self.is_fitted = False
-        
-        # Embedding dimensions - updated for better balance
-        self.code_embedding_dim = 768  # Standard for CodeBERT
-        self.structure_dim = 0  # Will be determined from first analysis
-        self.graph_dim = 20 if MULTI_LANG_AVAILABLE else 15
-        self.code_pattern_dim = 50  # New: pattern-based features
-        
-        self.logger.info("Improved code embedder initialized successfully with enhanced similarity")
+        self.logger.info(f"Ollama Java code embedder initialized with {self.config.model_name}")
     
-    def _initialize_models(self):
-        """Initialize the code embedding models with better model selection"""
+    def _get_embedding_dimension(self) -> int:
+        """Get embedding dimension based on model"""
+        model_dimensions = {
+            'starcoder2:3b': 2048,
+            'starcoder2:7b': 4096, 
+            'starcoder2:15b': 6144,
+            'starcoder:3b': 2048,
+            'starcoder:7b': 4096,
+            'qwen2.5-coder:3b': 2048,
+            'qwen2.5-coder:7b': 4096,
+            'codellama:7b': 4096,
+            'codellama:13b': 5120
+        }
+        
+        # Check exact match first
+        if self.config.model_name in model_dimensions:
+            return model_dimensions[self.config.model_name]
+        
+        # Check for partial matches (e.g., "starcoder2" in model name)
+        for model_key, dim in model_dimensions.items():
+            if model_key.split(':')[0] in self.config.model_name:
+                return dim
+        
+        # Default fallback
+        self.logger.warning(f"Unknown model {self.config.model_name}, using default dimension 2048")
+        return 2048
+    
+    def _test_ollama_connection(self):
+        """Test connection to Ollama server"""
         try:
-            if SENTENCE_TRANSFORMERS_AVAILABLE:
-                self.logger.info(f"Loading SentenceTransformer model: {self.model_name}")
+            response = requests.get(f"{self.config.ollama_base_url}/api/tags", timeout=5)
+            if response.status_code == 200:
+                models = response.json().get('models', [])
+                model_names = [m['name'] for m in models]
                 
-                try:
-                    # Try specific code models first
-                    if 'codebert' in self.model_name.lower():
-                        self.logger.info("Using CodeBERT-based model for better code understanding")
-                        self.code_model = SentenceTransformer(self.model_name, device=self.device)
-                    else:
-                        # Try to use sentence-transformers wrapper
-                        self.code_model = SentenceTransformer(self.model_name, device=self.device)
-                    
-                    self.logger.info("SentenceTransformer model loaded successfully")
-                except Exception as st_error:
-                    self.logger.warning(f"SentenceTransformer failed: {st_error}")
-                    # Fall back to transformers
-                    if TRANSFORMERS_AVAILABLE:
-                        self.logger.info("Falling back to raw transformers")
-                        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-                        self.code_model = AutoModel.from_pretrained(self.model_name).to(self.device)
-                        self.code_model.eval()
-                    else:
-                        self.code_model = None
-            
-            elif TRANSFORMERS_AVAILABLE:
-                self.logger.info(f"Loading Transformers model: {self.model_name}")
-                self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-                self.code_model = AutoModel.from_pretrained(self.model_name).to(self.device)
-                self.code_model.eval()
-                self.logger.info("Transformers model loaded successfully")
-            
+                # Check if our model is available
+                if not any(self.config.model_name in name for name in model_names):
+                    self.logger.warning(f"Model {self.config.model_name} not found in Ollama. Available: {model_names}")
+                    self.logger.info(f"To pull the model, run: ollama pull {self.config.model_name}")
+                else:
+                    self.logger.info(f"Model {self.config.model_name} available in Ollama")
             else:
-                self.logger.warning("No embedding models available. Using pattern-based embeddings only.")
-                self.code_model = None
+                raise requests.RequestException(f"HTTP {response.status_code}")
                 
-        except Exception as e:
-            self.logger.error(f"Failed to load embedding model: {str(e)}")
-            self.logger.warning("Falling back to pattern-based embeddings")
-            self.code_model = None
+        except requests.RequestException as e:
+            self.logger.error(f"Cannot connect to Ollama at {self.config.ollama_base_url}: {e}")
+            self.logger.info("Make sure Ollama is running and accessible")
 
     def embed_codebase(self, code_files: Dict[str, str]) -> np.ndarray:
         """
-        Generate improved hybrid embedding for entire codebase.
+        Generate embeddings for Java codebase using Ollama.
         
         Args:
             code_files: Dictionary mapping filenames to content
             
         Returns:
-            Combined embedding vector as numpy array
+            Numpy array containing the codebase embedding
         """
-        # 1. Generate semantic embeddings
-        code_embedding = self._generate_semantic_embedding(code_files)
+        # Filter to Java files only
+        java_files = self._filter_java_files(code_files)
         
-        # 2. Extract structural features  
-        structure_features = self._extract_structural_features(code_files)
+        if not java_files:
+            self.logger.warning("No Java files found in codebase")
+            return self._get_zero_embedding()
         
-        # 3. Extract dependency graph features
-        graph_features = self._extract_graph_features(code_files)
+        # Prepare code for embedding
+        processed_code = self._prepare_java_code(java_files)
         
-        # 4. Extract code pattern features
-        pattern_features = self._extract_code_patterns(code_files)
+        # Generate embedding using Ollama
+        embedding = self._generate_ollama_embedding(processed_code)
         
-        # Set dimensions on first embedding
-        if self.structure_dim == 0:
-            self.structure_dim = len(structure_features)
-        
-        # Combine all embeddings with proper handling
-        try:
-            combined_embedding = np.concatenate([
-                code_embedding,      # Semantic understanding (768)
-                structure_features,  # Structural metrics (variable)
-                graph_features,      # Graph/dependency features (15-20)
-                pattern_features     # Code patterns (50)
-            ])
-            
-            self.logger.debug(f"Combined embedding dimensions: {len(combined_embedding)} "
-                            f"(code: {len(code_embedding)}, struct: {len(structure_features)}, "
-                            f"graph: {len(graph_features)}, patterns: {len(pattern_features)})")
-            
-            return combined_embedding.astype(np.float32)
-            
-        except Exception as e:
-            self.logger.error(f"Error combining embeddings: {str(e)}")
-            # Return a safe fallback embedding
-            fallback_dim = self.code_embedding_dim + 100  # Safe fallback size
-            return np.random.normal(0, 0.01, fallback_dim).astype(np.float32)
-
-    def _generate_semantic_embedding(self, code_files: Dict[str, str]) -> np.ndarray:
-        """Generate improved semantic embedding with better code preprocessing"""
-        try:
-            # Enhanced code preprocessing
-            processed_code = self._preprocess_code_for_embedding(code_files)
-            
-            if self.code_model is None:
-                # Better fallback: pattern-based embeddings
-                return self._generate_pattern_based_embedding(processed_code)
-            
-            if SENTENCE_TRANSFORMERS_AVAILABLE and isinstance(self.code_model, SentenceTransformer):
-                # Use SentenceTransformer with better chunking
-                embedding = self._encode_with_chunking(processed_code)
-                return embedding.astype(np.float32)
-            
-            elif TRANSFORMERS_AVAILABLE and self.tokenizer is not None:
-                # Use raw transformers with improved pooling
-                with torch.no_grad():
-                    inputs = self.tokenizer(processed_code, return_tensors='pt', 
-                                          max_length=512, truncation=True, padding=True)
-                    inputs = {k: v.to(self.device) for k, v in inputs.items()}
-                    
-                    outputs = self.code_model(**inputs)
-                    # Use better pooling strategy
-                    embedding = self._improved_pooling(outputs, inputs['attention_mask'])
-                    return embedding.astype(np.float32)
-            
-            else:
-                return self._generate_pattern_based_embedding(processed_code)
-                
-        except Exception as e:
-            self.logger.warning(f"Error generating semantic embedding: {str(e)}")
-            return self._generate_pattern_based_embedding("")
+        return embedding
     
-    def _preprocess_code_for_embedding(self, code_files: Dict[str, str]) -> str:
-        """Enhanced code preprocessing for better semantic understanding"""
-        relevant_files = {}
-        
-        # Filter programming files more intelligently
-        programming_extensions = {
-            '.py', '.java', '.js', '.jsx', '.ts', '.tsx', '.cpp', '.c', '.h', '.cs',
-            '.php', '.rb', '.go', '.rs', '.kt', '.scala', '.swift', '.m', '.mm'
-        }
+    def _filter_java_files(self, code_files: Dict[str, str]) -> Dict[str, str]:
+        """Filter dictionary to only include Java files"""
+        java_files = {}
         
         for filename, content in code_files.items():
-            # Skip binary/meta files
-            if filename.startswith('__MACOSX') or filename.startswith('.'):
-                continue
+            if filename.lower().endswith('.java'):
+                # Skip empty files
+                if content.strip():
+                    java_files[filename] = content
+        
+        self.logger.debug(f"Filtered to {len(java_files)} Java files from {len(code_files)} total files")
+        return java_files
+    
+    def _prepare_java_code(self, java_files: Dict[str, str]) -> str:
+        """
+        Prepare Java code for embedding by cleaning and combining files.
+        
+        Args:
+            java_files: Dictionary of Java files
             
-            # Include files with programming extensions
-            if any(filename.lower().endswith(ext) for ext in programming_extensions):
-                relevant_files[filename] = content
-        
-        if not relevant_files:
-            relevant_files = code_files  # Fallback to all files
-        
-        # Enhanced code combining with structure preservation
+        Returns:
+            Processed code string ready for embedding
+        """
         code_parts = []
-        for filename, content in relevant_files.items():
-            # Detect language and add context
-            lang_hint = self._detect_language_from_extension(filename)
             
-            # Clean and normalize code
-            cleaned_content = self._clean_code_content(content)
+        for filename, content in java_files.items():
+            # Clean the code content
+            cleaned_content = self._clean_java_code(content)
             
-            # Add with better formatting
-            code_parts.append(f"// FILE: {filename} [{lang_hint}]\n{cleaned_content}")
+            # Add file marker and content
+            code_parts.append(f"// FILE: {filename}\n{cleaned_content}")
         
+        # Combine all files
         combined_code = "\n\n// ===== NEXT FILE =====\n\n".join(code_parts)
         
-        # Smart truncation preserving structure
-        if len(combined_code) > 12000:  # Conservative limit
-            # Truncate but try to preserve complete functions/classes
-            truncated = self._smart_truncate(combined_code, 12000)
-            combined_code = truncated + "\n// ... (truncated)"
+        # Truncate if too long (Ollama models support longer context)
+        if len(combined_code) > self.config.max_length * 4:  # Rough character estimate
+            self.logger.debug("Code too long, truncating...")
+            combined_code = self._smart_truncate(combined_code)
         
         return combined_code
     
-    def _clean_code_content(self, content: str) -> str:
-        """Clean code content for better embedding"""
-        # Remove excessive whitespace but preserve structure
+    def _clean_java_code(self, content: str) -> str:
+        """Clean Java code content"""
+        # Remove excessive whitespace while preserving structure
         lines = content.split('\n')
         cleaned_lines = []
         
         for line in lines:
             # Remove trailing whitespace
             line = line.rstrip()
-            # Skip empty lines but keep one for structure
-            if line.strip() or (cleaned_lines and cleaned_lines[-1].strip()):
+            
+            # Skip completely empty lines in sequence
+            if not line.strip():
+                if not cleaned_lines or cleaned_lines[-1].strip():
+                    cleaned_lines.append('')
+            else:
                 cleaned_lines.append(line)
         
-        # Remove comments that are just noise
-        result = '\n'.join(cleaned_lines)
-        
         # Remove excessive blank lines
+        result = '\n'.join(cleaned_lines)
         result = re.sub(r'\n\s*\n\s*\n', '\n\n', result)
         
         return result
     
-    def _smart_truncate(self, text: str, max_length: int) -> str:
-        """Smart truncation that preserves code structure"""
-        if len(text) <= max_length:
-            return text
+    def _smart_truncate(self, code: str) -> str:
+        """Smart truncation that preserves Java code structure"""
+        target_length = self.config.max_length * 3  # Conservative estimate
         
-        # Try to truncate at natural boundaries
-        boundaries = ['\n\n// ===== NEXT FILE =====\n\n', '\nclass ', '\ndef ', '\nfunction ', '\npublic ']
+        if len(code) <= target_length:
+            return code
         
-        for boundary in boundaries:
-            last_boundary = text.rfind(boundary, 0, max_length)
-            if last_boundary > max_length * 0.7:  # At least 70% of content
-                return text[:last_boundary]
-        
-        # Fallback: truncate at word boundary
-        truncated = text[:max_length]
-        last_space = truncated.rfind(' ')
-        if last_space > max_length * 0.9:
-            truncated = truncated[:last_space]
-        
-        return truncated
-    
-    def _detect_language_from_extension(self, filename: str) -> str:
-        """Detect programming language from file extension"""
-        ext_to_lang = {
-            '.py': 'python', '.java': 'java', '.js': 'javascript', '.jsx': 'javascript',
-            '.ts': 'typescript', '.tsx': 'typescript', '.cpp': 'cpp', '.c': 'c',
-            '.h': 'c', '.cs': 'csharp', '.php': 'php', '.rb': 'ruby',
-            '.go': 'go', '.rs': 'rust', '.kt': 'kotlin', '.scala': 'scala'
-        }
-        
-        for ext, lang in ext_to_lang.items():
-            if filename.lower().endswith(ext):
-                return lang
-        return 'unknown'
-    
-    def _encode_with_chunking(self, text: str) -> np.ndarray:
-        """Encode long text with intelligent chunking"""
-        # If text is short enough, encode directly
-        if len(text) <= 8000:
-            return self.code_model.encode([text], convert_to_numpy=True)[0]
-        
-        # Split into chunks at natural boundaries
-        chunks = self._split_into_chunks(text, 6000)
-        chunk_embeddings = []
-        
-        for chunk in chunks:
-            embedding = self.code_model.encode([chunk], convert_to_numpy=True)[0]
-            chunk_embeddings.append(embedding)
-        
-        # Combine chunks using weighted average (give more weight to earlier chunks)
-        weights = np.exp(-0.1 * np.arange(len(chunk_embeddings)))  # Exponential decay
-        weights = weights / weights.sum()
-        
-        combined = np.average(chunk_embeddings, axis=0, weights=weights)
-        return combined
-    
-    def _split_into_chunks(self, text: str, chunk_size: int) -> List[str]:
-        """Split text into chunks at natural boundaries"""
-        if len(text) <= chunk_size:
-            return [text]
-        
-        chunks = []
-        current_pos = 0
-        
-        while current_pos < len(text):
-            end_pos = current_pos + chunk_size
-            
-            if end_pos >= len(text):
-                chunks.append(text[current_pos:])
-                break
-            
-            # Find a good splitting point
-            chunk_text = text[current_pos:end_pos]
-            
-            # Try to split at natural boundaries
-            for boundary in ['\n\nclass ', '\n\ndef ', '\n\nfunction ', '\n\n']:
-                last_boundary = chunk_text.rfind(boundary)
-                if last_boundary > chunk_size * 0.5:  # At least half the chunk
-                    end_pos = current_pos + last_boundary
-                    break
-            
-            chunks.append(text[current_pos:end_pos])
-            current_pos = end_pos
-        
-        return chunks
-    
-    def _improved_pooling(self, outputs, attention_mask) -> np.ndarray:
-        """Improved pooling strategy for better code representation"""
-        last_hidden_states = outputs.last_hidden_state
-        
-        # Mean pooling with attention mask
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(last_hidden_states.size()).float()
-        sum_embeddings = torch.sum(last_hidden_states * input_mask_expanded, 1)
-        sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-        mean_pooled = sum_embeddings / sum_mask
-        
-        # Also get CLS token representation
-        cls_token = last_hidden_states[:, 0, :]
-        
-        # Combine CLS and mean pooling (weighted average)
-        combined = 0.3 * cls_token + 0.7 * mean_pooled
-        
-        return combined.cpu().numpy()[0]
-    
-    def _generate_pattern_based_embedding(self, code: str) -> np.ndarray:
-        """Generate embeddings based on code patterns when models aren't available"""
-        features = np.zeros(self.code_embedding_dim, dtype=np.float32)
-        
-        if not code:
-            return features
-        
-        # Pattern-based features
-        patterns = {
-            'class_declarations': len(re.findall(r'\bclass\s+\w+', code, re.IGNORECASE)),
-            'function_definitions': len(re.findall(r'\b(def|function|void|int|String)\s+\w+\s*\(', code)),
-            'imports': len(re.findall(r'\b(import|include|using|from)\s+', code)),
-            'loops': len(re.findall(r'\b(for|while)\s*\(', code)),
-            'conditionals': len(re.findall(r'\bif\s*\(', code)),
-            'try_catch': len(re.findall(r'\b(try|catch|except)\b', code)),
-            'comments': len(re.findall(r'//.*|/\*.*?\*/|#.*', code)),
-            'strings': len(re.findall(r'"[^"]*"|\'[^\']*\'', code)),
-            'numbers': len(re.findall(r'\b\d+\b', code))
-        }
-        
-        # Normalize and encode patterns
-        total_lines = max(len(code.split('\n')), 1)
-        for i, (pattern, count) in enumerate(patterns.items()):
-            if i < len(features):
-                features[i] = min(count / total_lines, 1.0)  # Normalize by lines
-        
-        # Add code complexity indicators
-        complexity_indicators = [
-            len(set(re.findall(r'\b[a-zA-Z_]\w*\b', code))) / max(len(code.split()), 1),  # Vocabulary diversity
-            len(re.findall(r'[{}()]', code)) / max(len(code), 1),  # Structural complexity
-            len(re.findall(r'\b(public|private|static|final|const)\b', code)) / max(total_lines, 1)  # Modifiers
+        # Try to truncate at natural Java boundaries
+        boundaries = [
+            '\n\n// ===== NEXT FILE =====\n\n',  # File boundaries
+            '\n    }\n}',  # End of class
+            '\n    }',     # End of method
+            '\n}',         # Any closing brace
+            '\n'           # Line boundary
         ]
         
-        for i, indicator in enumerate(complexity_indicators):
-            idx = len(patterns) + i
-            if idx < len(features):
-                features[idx] = min(indicator, 1.0)
+        for boundary in boundaries:
+            last_boundary = code.rfind(boundary, 0, target_length)
+            if last_boundary > target_length * 0.7:  # At least 70% of target
+                return code[:last_boundary + len(boundary)]
         
-        return features
+        # Fallback: truncate at word boundary
+        truncated = code[:target_length]
+        last_space = truncated.rfind(' ')
+        if last_space > target_length * 0.9:
+            truncated = truncated[:last_space]
+        
+        return truncated + "\n// ... (code truncated)"
     
-    def _extract_code_patterns(self, code_files: Dict[str, str]) -> np.ndarray:
-        """Extract code pattern features for better similarity detection"""
-        features = np.zeros(self.code_pattern_dim, dtype=np.float32)
-        
-        # Combine all code
-        all_code = '\n'.join(code_files.values())
-        
-        if not all_code:
-            return features
-        
-        # Extract various code patterns
-        patterns = {
-            # Structural patterns
-            'avg_line_length': np.mean([len(line) for line in all_code.split('\n')]),
-            'max_line_length': max([len(line) for line in all_code.split('\n')]),
-            'indentation_consistency': self._measure_indentation_consistency(all_code),
-            'brace_style': self._measure_brace_style(all_code),
+    def _generate_ollama_embedding(self, code: str) -> np.ndarray:
+        """Generate embedding using Ollama API"""
+        try:
+            # Create a prompt that encourages semantic understanding
+            prompt = f"""Please analyze this Java code and understand its semantic meaning:
+
+{code}
+
+This code represents a complete Java implementation."""
             
-            # Naming patterns
-            'camel_case_usage': len(re.findall(r'\b[a-z]+[A-Z][a-zA-Z]*\b', all_code)),
-            'snake_case_usage': len(re.findall(r'\b[a-z]+_[a-z_]+\b', all_code)),
-            'constant_usage': len(re.findall(r'\b[A-Z][A-Z_]+\b', all_code)),
+            # Make request to Ollama API
+            response = requests.post(
+                f"{self.config.ollama_base_url}/api/embeddings",
+                json={
+                    "model": self.config.model_name,
+                    "prompt": prompt
+                },
+                timeout=60  # Increased timeout for larger models
+            )
             
-            # Design patterns
-            'interface_usage': len(re.findall(r'\binterface\s+\w+', all_code, re.IGNORECASE)),
-            'abstract_usage': len(re.findall(r'\babstract\s+', all_code, re.IGNORECASE)),
-            'inheritance_depth': self._estimate_inheritance_depth(all_code),
-            
-            # Error handling patterns
-            'exception_handling': len(re.findall(r'\b(try|catch|except|finally|throw|raise)\b', all_code)),
-            'null_checks': len(re.findall(r'\b(null|None|nil)\s*[!=]=', all_code)),
-            
-            # Documentation patterns
-            'docstring_usage': len(re.findall(r'""".*?"""|\'\'\'.*?\'\'\'', all_code, re.DOTALL)),
-            'comment_density': len(re.findall(r'//.*|/\*.*?\*/|#.*', all_code)) / max(len(all_code.split('\n')), 1),
-            
-            # Complexity patterns
-            'nested_structures': self._count_nested_structures(all_code),
-            'method_chaining': len(re.findall(r'\.\w+\(\)[.\w()]*', all_code)),
-            'lambda_usage': len(re.findall(r'\blambda\b|=>', all_code)),
-            
-            # Code organization
-            'file_count': len(code_files),
-            'avg_file_size': np.mean([len(content) for content in code_files.values()]),
-            'package_structure_depth': max([filename.count('/') for filename in code_files.keys()], default=0)
-        }
-        
-        # Normalize and store patterns
-        total_lines = max(len(all_code.split('\n')), 1)
-        total_chars = max(len(all_code), 1)
-        
-        feature_idx = 0
-        for pattern_name, value in patterns.items():
-            if feature_idx >= self.code_pattern_dim:
-                break
+            if response.status_code == 200:
+                result = response.json()
+                embedding = np.array(result['embedding'], dtype=np.float32)
                 
-            # Normalize different types of values
-            if 'length' in pattern_name or 'size' in pattern_name:
-                normalized_value = min(value / 100, 5.0)  # Normalize lengths
-            elif 'count' in pattern_name or 'usage' in pattern_name:
-                normalized_value = min(value / total_lines, 2.0)  # Normalize counts by lines
-            elif 'density' in pattern_name or 'consistency' in pattern_name:
-                normalized_value = min(value, 1.0)  # Already normalized values
+                # Normalize if requested
+                if self.config.normalize_embeddings:
+                    norm = np.linalg.norm(embedding)
+                    if norm > 0:
+                        embedding = embedding / norm
+                
+                self.logger.debug(f"Generated embedding with shape: {embedding.shape}")
+                return embedding
+                
             else:
-                normalized_value = min(value / max(total_lines, 1), 2.0)  # General normalization
-            
-            features[feature_idx] = normalized_value
-            feature_idx += 1
-        
-        return features
-    
-    def _measure_indentation_consistency(self, code: str) -> float:
-        """Measure consistency of indentation style"""
-        lines = [line for line in code.split('\n') if line.strip()]
-        if not lines:
-            return 0.0
-        
-        space_indents = sum(1 for line in lines if line.startswith('    '))
-        tab_indents = sum(1 for line in lines if line.startswith('\t'))
-        total_indented = sum(1 for line in lines if line.startswith((' ', '\t')))
-        
-        if total_indented == 0:
-            return 1.0
-        
-        # Higher score for consistent style
-        consistency = max(space_indents, tab_indents) / total_indented
-        return consistency
-    
-    def _measure_brace_style(self, code: str) -> float:
-        """Measure brace placement consistency"""
-        # Count different brace styles
-        same_line_braces = len(re.findall(r'\)\s*{', code))
-        new_line_braces = len(re.findall(r'\)\s*\n\s*{', code))
-        total_braces = same_line_braces + new_line_braces
-        
-        if total_braces == 0:
-            return 0.0
-        
-        return max(same_line_braces, new_line_braces) / total_braces
-    
-    def _estimate_inheritance_depth(self, code: str) -> int:
-        """Estimate maximum inheritance depth"""
-        # Simple heuristic: count extends/implements chains
-        inheritance_patterns = re.findall(r'\bextends\s+\w+|\bimplements\s+[\w,\s]+', code, re.IGNORECASE)
-        return len(inheritance_patterns)
-    
-    def _count_nested_structures(self, code: str) -> int:
-        """Count deeply nested structures"""
-        max_nesting = 0
-        current_nesting = 0
-        
-        for char in code:
-            if char in '{([':
-                current_nesting += 1
-                max_nesting = max(max_nesting, current_nesting)
-            elif char in '})]':
-                current_nesting = max(0, current_nesting - 1)
-        
-        return max_nesting
-    
-    def _extract_structural_features(self, code_files: Dict[str, str]) -> np.ndarray:
-        """Extract structural features from codebase"""
-        try:
-            if self.structure_analyzer is None:
-                # Return minimal features when no analyzer available
-                return np.zeros(10, dtype=np.float32)
+                self.logger.error(f"Ollama API error: {response.status_code} - {response.text}")
+                return self._get_zero_embedding()
                 
-            aggregated_metrics = self.structure_analyzer.analyze_codebase(code_files)
-            
-            # Filter out non-numeric values and encode categorical ones
-            numeric_features = []
-            categorical_encodings = []
-            
-            # Define expected categorical features and their encodings
-            language_encoding = {
-                'python': 1.0,
-                'java': 2.0, 
-                'javascript': 3.0,
-                'typescript': 4.0,
-                'unknown': 0.0
-            }
-            
-            for key in sorted(aggregated_metrics.keys()):
-                value = aggregated_metrics[key]
-                
-                if key == 'primary_language':
-                    # Encode primary language as numeric
-                    encoded_value = language_encoding.get(str(value).lower(), 0.0)
-                    categorical_encodings.append(encoded_value)
-                elif isinstance(value, (int, float, np.integer, np.floating)):
-                    # Include numeric values directly
-                    numeric_features.append(float(value))
-                else:
-                    # Skip other non-numeric values
-                    self.logger.debug(f"Skipping non-numeric feature {key}: {value}")
-            
-            # Combine numeric and categorical features
-            all_features = numeric_features + categorical_encodings
-            features = np.array(all_features, dtype=np.float32)
-            
-            self.logger.debug(f"Extracted {len(features)} structural features")
-            return features
-            
+        except requests.RequestException as e:
+            self.logger.error(f"Error connecting to Ollama: {str(e)}")
+            return self._get_zero_embedding()
         except Exception as e:
-            self.logger.warning(f"Error extracting structural features: {str(e)}")
-            # Return zero features if analysis fails
-            return np.zeros(50, dtype=np.float32)  # Reasonable default size
+            self.logger.error(f"Error generating embedding: {str(e)}")
+            return self._get_zero_embedding()
     
-    def _extract_graph_features(self, code_files: Dict[str, str]) -> np.ndarray:
-        """Extract dependency graph features from codebase"""
-        try:
-            if self.graph_builder is None:
-                # Return minimal graph features when no builder available
-                return np.zeros(self.graph_dim, dtype=np.float32)
-                
-            dependency_graph = self.graph_builder.build_from_files(code_files)
-            graph_features = self.graph_builder.get_graph_features()
-            return graph_features
-        except Exception as e:
-            self.logger.warning(f"Error extracting graph features: {str(e)}")
-            return np.zeros(self.graph_dim, dtype=np.float32)
+    def _get_zero_embedding(self) -> np.ndarray:
+        """Return zero embedding as fallback"""
+        return np.zeros(self.embedding_dim, dtype=np.float32)
     
-    def fit_scalers(self, all_embeddings: List[np.ndarray]):
+    def embed_batch(self, code_files_list: List[Dict[str, str]]) -> List[np.ndarray]:
         """
-        Fit scalers on all embeddings for normalization.
+        Generate embeddings for multiple codebases.
         
         Args:
-            all_embeddings: List of embedding vectors from training data
-        """
-        if not all_embeddings:
-            self.logger.warning("No embeddings provided for scaler fitting")
-            return
-        
-        self.logger.info(f"Fitting scalers on {len(all_embeddings)} embeddings")
-        
-        # Determine dimensions from first embedding
-        first_embedding = all_embeddings[0]
-        total_dim = len(first_embedding)
-        
-        if self.structure_dim == 0:
-            # Estimate structure dimension (total - code - graph - pattern)
-            self.structure_dim = total_dim - self.code_embedding_dim - self.graph_dim - self.code_pattern_dim
-            self.structure_dim = max(self.structure_dim, 0)  # Ensure non-negative
-        
-        # Split embeddings into components
-        structure_features = []
-        graph_features = []
-        
-        for embedding in all_embeddings:
-            if len(embedding) != total_dim:
-                self.logger.warning(f"Inconsistent embedding dimension: {len(embedding)} vs {total_dim}")
-                continue
-                
-            struct_start = self.code_embedding_dim
-            struct_end = struct_start + self.structure_dim
-            graph_start = struct_end + self.code_pattern_dim  # Skip pattern features
-            
-            if struct_end > struct_start:
-                structure_features.append(embedding[struct_start:struct_end])
-            if graph_start < len(embedding):
-                graph_features.append(embedding[graph_start:graph_start + self.graph_dim])
-        
-        # Fit scalers
-        if structure_features and len(structure_features[0]) > 0:
-            try:
-                self.structure_scaler.fit(structure_features)
-                self.logger.info("Structure scaler fitted successfully")
-            except Exception as e:
-                self.logger.warning(f"Failed to fit structure scaler: {str(e)}")
-        
-        if graph_features and len(graph_features[0]) > 0:
-            try:
-                self.graph_scaler.fit(graph_features)
-                self.logger.info("Graph scaler fitted successfully")
-            except Exception as e:
-                self.logger.warning(f"Failed to fit graph scaler: {str(e)}")
-        
-        self.is_fitted = True
-    
-    def normalize_embedding(self, embedding: np.ndarray) -> np.ndarray:
-        """
-        Normalize embedding components using fitted scalers.
-        
-        Args:
-            embedding: Raw embedding vector
+            code_files_list: List of codebase dictionaries
             
         Returns:
-            Normalized embedding vector
+            List of embedding arrays
         """
-        if not self.is_fitted:
-            self.logger.warning("Scalers not fitted. Returning unnormalized embedding.")
-            return embedding
+        embeddings = []
         
-        try:
-            # Split embedding into components
-            struct_start = self.code_embedding_dim
-            struct_end = struct_start + self.structure_dim
-            pattern_start = struct_end
-            pattern_end = pattern_start + self.code_pattern_dim
-            graph_start = pattern_end
-            
-            code_part = embedding[:self.code_embedding_dim]
-            pattern_part = embedding[pattern_start:pattern_end] if pattern_end <= len(embedding) else np.array([])
-            
-            # Normalize structural and graph parts if they exist
-            if struct_end > struct_start and struct_end <= len(embedding):
-                struct_part = embedding[struct_start:struct_end]
-                struct_normalized = self.structure_scaler.transform(struct_part.reshape(1, -1)).flatten()
-            else:
-                struct_normalized = np.array([])
-            
-            if graph_start < len(embedding):
-                graph_part = embedding[graph_start:graph_start + self.graph_dim]
-                if len(graph_part) == self.graph_dim:
-                    graph_normalized = self.graph_scaler.transform(graph_part.reshape(1, -1)).flatten()
-                else:
-                    graph_normalized = graph_part  # Use as-is if wrong dimension
-            else:
-                graph_normalized = np.array([])
-            
-            # Combine normalized components
-            parts = [code_part]
-            if len(struct_normalized) > 0:
-                parts.append(struct_normalized)
-            if len(pattern_part) > 0:
-                parts.append(pattern_part)
-            if len(graph_normalized) > 0:
-                parts.append(graph_normalized)
-            
-            normalized = np.concatenate(parts)
-            return normalized.astype(np.float32)
-            
-        except Exception as e:
-            self.logger.warning(f"Error normalizing embedding: {str(e)}")
-            return embedding
+        for i, code_files in enumerate(code_files_list):
+            self.logger.debug(f"Processing codebase {i+1}/{len(code_files_list)}")
+            embedding = self.embed_codebase(code_files)
+            embeddings.append(embedding)
+        
+        return embeddings
     
-    def get_embedding_info(self) -> Dict[str, int]:
-        """
-        Get information about embedding dimensions.
-        
-        Returns:
-            Dictionary with dimension information
-        """
+    def get_embedding_info(self) -> Dict[str, any]:
+        """Get information about the embedder configuration"""
         return {
-            'code_embedding_dim': self.code_embedding_dim,
-            'structure_dim': self.structure_dim,
-            'graph_dim': self.graph_dim,
-            'code_pattern_dim': self.code_pattern_dim,
-            'total_dim': self.code_embedding_dim + self.structure_dim + self.graph_dim + self.code_pattern_dim
+            'model_name': self.config.model_name,
+            'embedding_dim': self.embedding_dim,
+            'use_ollama': True,
+            'ollama_base_url': self.config.ollama_base_url,
+            'max_length': self.config.max_length,
+            'java_only': self.config.java_only,
+            'normalize_embeddings': self.config.normalize_embeddings
         }
     
-    def save_scalers(self, filepath: str):
-        """Save fitted scalers to file"""
-        import pickle
-        scaler_data = {
-            'structure_scaler': self.structure_scaler,
-            'graph_scaler': self.graph_scaler,
-            'is_fitted': self.is_fitted,
-            'embedding_info': self.get_embedding_info()
-        }
-        with open(filepath, 'wb') as f:
-            pickle.dump(scaler_data, f)
-        self.logger.info(f"Scalers saved to {filepath}")
+    def calculate_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
+        """
+        Calculate cosine similarity between two embeddings with proper bounds and penalty.
+        
+        Args:
+            embedding1: First embedding vector
+            embedding2: Second embedding vector
+            
+        Returns:
+            Similarity score between 0.0 and 1.0
+        """
+        # Ensure embeddings are normalized
+        embedding1 = embedding1 / (np.linalg.norm(embedding1) + 1e-8)
+        embedding2 = embedding2 / (np.linalg.norm(embedding2) + 1e-8)
+        
+        # Calculate cosine similarity
+        similarity = np.dot(embedding1, embedding2)
+        
+        # Clamp to [0, 1] range to handle floating point precision errors
+        similarity = np.clip(similarity, 0.0, 1.0)
+        
+        # Add strong penalty for code differences to reduce clustering near 1.0
+        # Apply a stronger power function to spread out high similarities more aggressively
+        similarity = similarity ** 5  # Stronger penalty: 0.99^5 = .95, 0.95^3.5 ≈ 0..77
+        
+        # Add small amount of controlled noise to further differentiate near-identical scores
+        # But only if similarity is very high to avoid affecting genuinely different code
+        if similarity > 0.85:
+            noise = np.random.normal(0, 0.02)  # Small Gaussian noise
+            similarity = np.clip(similarity + noise, 0.0, 1.0)
+        
+        return float(similarity)
     
-    def load_scalers(self, filepath: str):
-        """Load fitted scalers from file"""
-        import pickle
+    def batch_similarity(self, query_embedding: np.ndarray, 
+                        candidate_embeddings: List[np.ndarray]) -> List[float]:
+        """
+        Calculate similarities between query and multiple candidates.
+        
+        Args:
+            query_embedding: Query embedding
+            candidate_embeddings: List of candidate embeddings
+            
+        Returns:
+            List of similarity scores
+        """
+        similarities = []
+        
+        for candidate in candidate_embeddings:
+            similarity = self.calculate_similarity(query_embedding, candidate)
+            similarities.append(similarity)
+        
+        return similarities
+
+
+class JavaCodeEmbedder:
+    """Original transformers-based Java code embedder (kept for compatibility)"""
+    
+    def __init__(self, config: Optional[EmbedderConfig] = None):
+        """
+        Initialize the Java code embedder.
+        
+        Args:
+            config: Embedder configuration (uses default if None)
+        """
+        self.config = config or EmbedderConfig()
+        self.logger = get_logger(__name__)
+        
+        # Set device with improved detection for M3 Macs
+        if self.config.device is None:
+            self.config.device = self._detect_best_device()
+        
+        # Initialize model and tokenizer
+        self.model = None
+        self.tokenizer = None
+        self.embedding_dim = None
+        
+        self._initialize_model()
+        
+        self.logger.info(f"Java code embedder initialized with StarCoder2 on {self.config.device}")
+    
+    def _detect_best_device(self) -> str:
+        """Detect the best available device for the current system"""
+        if torch.cuda.is_available():
+            return 'cuda'
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            # Use MPS on M3 Macs for better performance
+            self.logger.info("MPS (Metal Performance Shaders) available - using for M3 Mac acceleration")
+            return 'mps'
+        else:
+            return 'cpu'
+    
+    def _initialize_model(self):
+        """Initialize StarCoder2 model and tokenizer"""
+        if not TRANSFORMERS_AVAILABLE:
+            raise ImportError("transformers is required. Install with: pip install transformers")
+        
         try:
-            with open(filepath, 'rb') as f:
-                scaler_data = pickle.load(f)
+            self.logger.info(f"Loading StarCoder2 model: {self.config.model_name}")
             
-            self.structure_scaler = scaler_data['structure_scaler']
-            self.graph_scaler = scaler_data['graph_scaler']
-            self.is_fitted = scaler_data['is_fitted']
+            # Load tokenizer
+            self.tokenizer = AutoTokenizer.from_pretrained(self.config.model_name)
             
-            # Update dimensions
-            if 'embedding_info' in scaler_data:
-                info = scaler_data['embedding_info']
-                self.structure_dim = info.get('structure_dim', self.structure_dim)
-                self.graph_dim = info.get('graph_dim', self.graph_dim)
-                self.code_embedding_dim = info.get('code_embedding_dim', self.code_embedding_dim)
-                self.code_pattern_dim = info.get('code_pattern_dim', getattr(self, 'code_pattern_dim', 50))
+            # Add padding token if not present
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
             
-            self.logger.info(f"Scalers loaded from {filepath}")
+            # Load model with appropriate settings for each device type
+            if self.config.device == 'cuda':
+                self.model = AutoModel.from_pretrained(
+                    self.config.model_name,
+                    torch_dtype=torch.float16,
+                    device_map=self.config.device
+                )
+            elif self.config.device == 'mps':
+                # MPS works best with float32 on M3 Macs
+                self.model = AutoModel.from_pretrained(
+                    self.config.model_name,
+                    torch_dtype=torch.float32
+                )
+                self.model = self.model.to(self.config.device)
+            else:
+                # CPU - use float32 for compatibility
+                self.model = AutoModel.from_pretrained(
+                    self.config.model_name,
+                    torch_dtype=torch.float32
+                )
+                self.model = self.model.to(self.config.device)
+            
+            self.model.eval()
+            
+            # Get embedding dimension
+            self.embedding_dim = self.model.config.hidden_size
+            
+            self.logger.info(f"StarCoder2 model loaded successfully. Embedding dim: {self.embedding_dim}")
             
         except Exception as e:
-            self.logger.error(f"Failed to load scalers: {str(e)}")
+            self.logger.error(f"Failed to load StarCoder2 model: {str(e)}")
             raise
+    
+    def embed_codebase(self, code_files: Dict[str, str]) -> np.ndarray:
+        """
+        Generate embeddings for Java codebase.
+        
+        Args:
+            code_files: Dictionary mapping filenames to content
+            
+        Returns:
+            Numpy array containing the codebase embedding
+        """
+        # Filter to Java files only
+        java_files = self._filter_java_files(code_files)
+        
+        if not java_files:
+            self.logger.warning("No Java files found in codebase")
+            return self._get_zero_embedding()
+        
+        # Prepare code for embedding
+        processed_code = self._prepare_java_code(java_files)
+        
+        # Generate embedding
+        embedding = self._generate_embedding(processed_code)
+        
+        return embedding
+    
+    def _filter_java_files(self, code_files: Dict[str, str]) -> Dict[str, str]:
+        """Filter dictionary to only include Java files"""
+        java_files = {}
+        
+        for filename, content in code_files.items():
+            if filename.lower().endswith('.java'):
+                # Skip empty files
+                if content.strip():
+                    java_files[filename] = content
+        
+        self.logger.debug(f"Filtered to {len(java_files)} Java files from {len(code_files)} total files")
+        return java_files
+    
+    def _prepare_java_code(self, java_files: Dict[str, str]) -> str:
+        """
+        Prepare Java code for embedding by cleaning and combining files.
+        
+        Args:
+            java_files: Dictionary of Java files
+            
+        Returns:
+            Processed code string ready for embedding
+        """
+        code_parts = []
+        
+        for filename, content in java_files.items():
+            # Clean the code content
+            cleaned_content = self._clean_java_code(content)
+            
+            # Add file marker and content
+            code_parts.append(f"// FILE: {filename}\n{cleaned_content}")
+        
+        # Combine all files
+        combined_code = "\n\n// ===== NEXT FILE =====\n\n".join(code_parts)
+        
+        # Truncate if too long
+        if len(combined_code) > self.config.max_length * 4:  # Rough character estimate
+            self.logger.debug("Code too long, truncating...")
+            combined_code = self._smart_truncate(combined_code)
+        
+        return combined_code
+    
+    def _clean_java_code(self, content: str) -> str:
+        """Clean Java code content"""
+        # Remove excessive whitespace while preserving structure
+        lines = content.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            # Remove trailing whitespace
+            line = line.rstrip()
+            
+            # Skip completely empty lines in sequence
+            if not line.strip():
+                if not cleaned_lines or cleaned_lines[-1].strip():
+                    cleaned_lines.append('')
+            else:
+                cleaned_lines.append(line)
+        
+        # Remove excessive blank lines
+        result = '\n'.join(cleaned_lines)
+        result = re.sub(r'\n\s*\n\s*\n', '\n\n', result)
+        
+        return result
+    
+    def _smart_truncate(self, code: str) -> str:
+        """Smart truncation that preserves Java code structure"""
+        target_length = self.config.max_length * 3  # Conservative estimate
+        
+        if len(code) <= target_length:
+            return code
+        
+        # Try to truncate at natural Java boundaries
+        boundaries = [
+            '\n\n// ===== NEXT FILE =====\n\n',  # File boundaries
+            '\n    }\n}',  # End of class
+            '\n    }',     # End of method
+            '\n}',         # Any closing brace
+            '\n'           # Line boundary
+        ]
+        
+        for boundary in boundaries:
+            last_boundary = code.rfind(boundary, 0, target_length)
+            if last_boundary > target_length * 0.7:  # At least 70% of target
+                return code[:last_boundary + len(boundary)]
+        
+        # Fallback: truncate at word boundary
+        truncated = code[:target_length]
+        last_space = truncated.rfind(' ')
+        if last_space > target_length * 0.9:
+            truncated = truncated[:last_space]
+        
+        return truncated + "\n// ... (code truncated)"
+    
+    def _generate_embedding(self, code: str) -> np.ndarray:
+        """Generate embedding using StarCoder2 model"""
+        try:
+            # Tokenize the code
+            inputs = self.tokenizer(
+                code,
+                return_tensors='pt',
+                max_length=self.config.max_length,
+                truncation=True,
+                padding=True
+            )
+            
+            # Move to device
+            inputs = {k: v.to(self.config.device) for k, v in inputs.items()}
+            
+            # Generate embeddings
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+                
+                # Use mean pooling over the sequence dimension
+                # Mask padding tokens
+                attention_mask = inputs['attention_mask']
+                token_embeddings = outputs.last_hidden_state
+                
+                # Apply attention mask and compute mean
+                masked_embeddings = token_embeddings * attention_mask.unsqueeze(-1)
+                sum_embeddings = masked_embeddings.sum(dim=1)
+                sum_mask = attention_mask.sum(dim=1, keepdim=True)
+                
+                # Avoid division by zero
+                mean_embedding = sum_embeddings / torch.clamp(sum_mask, min=1)
+                
+                # Convert to numpy
+                embedding = mean_embedding.cpu().numpy().flatten()
+                
+                # Normalize if requested
+                if self.config.normalize_embeddings:
+                    norm = np.linalg.norm(embedding)
+                    if norm > 0:
+                        embedding = embedding / norm
+                
+                return embedding.astype(np.float32)
+            
+        except Exception as e:
+            self.logger.error(f"Error generating embedding: {str(e)}")
+            return self._get_zero_embedding()
+    
+    def _get_zero_embedding(self) -> np.ndarray:
+        """Return zero embedding as fallback"""
+        if self.embedding_dim is None:
+            # Fallback dimension for StarCoder2-3B
+            self.embedding_dim = 2048
+        return np.zeros(self.embedding_dim, dtype=np.float32)
+    
+    def embed_batch(self, code_files_list: List[Dict[str, str]]) -> List[np.ndarray]:
+        """
+        Generate embeddings for multiple codebases.
+        
+        Args:
+            code_files_list: List of codebase dictionaries
+            
+        Returns:
+            List of embedding arrays
+        """
+        embeddings = []
+        
+        for i, code_files in enumerate(code_files_list):
+            self.logger.debug(f"Processing codebase {i+1}/{len(code_files_list)}")
+            embedding = self.embed_codebase(code_files)
+            embeddings.append(embedding)
+        
+        return embeddings
+    
+    def get_embedding_info(self) -> Dict[str, any]:
+        """Get information about the embedder configuration"""
+        return {
+            'model_name': self.config.model_name,
+            'embedding_dim': self.embedding_dim,
+            'device': self.config.device,
+            'max_length': self.config.max_length,
+            'java_only': self.config.java_only,
+            'normalize_embeddings': self.config.normalize_embeddings
+        }
+    
+    def calculate_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
+        """
+        Calculate cosine similarity between two embeddings with proper bounds and penalty.
+        
+        Args:
+            embedding1: First embedding vector
+            embedding2: Second embedding vector
+            
+        Returns:
+            Similarity score between 0.0 and 1.0
+        """
+        # Ensure embeddings are normalized
+        embedding1 = embedding1 / (np.linalg.norm(embedding1) + 1e-8)
+        embedding2 = embedding2 / (np.linalg.norm(embedding2) + 1e-8)
+        
+        # Calculate cosine similarity
+        similarity = np.dot(embedding1, embedding2)
+        
+        # Clamp to [0, 1] range to handle floating point precision errors
+        similarity = np.clip(similarity, 0.0, 1.0)
+        
+        # Add strong penalty for code differences to reduce clustering near 1.0
+        # Apply a stronger power function to spread out high similarities more aggressively
+        similarity = similarity ** 3.5  # Stronger penalty: 0.99^3.5 ≈ 0.96, 0.95^3.5 ≈ 0.84
+        
+        # Add small amount of controlled noise to further differentiate near-identical scores
+        # But only if similarity is very high to avoid affecting genuinely different code
+        if similarity > 0.85:
+            noise = np.random.normal(0, 0.02)  # Small Gaussian noise
+            similarity = np.clip(similarity + noise, 0.0, 1.0)
+        
+        return float(similarity)
+    
+    def batch_similarity(self, query_embedding: np.ndarray, 
+                        candidate_embeddings: List[np.ndarray]) -> List[float]:
+        """
+        Calculate similarities between query and multiple candidates.
+        
+        Args:
+            query_embedding: Query embedding
+            candidate_embeddings: List of candidate embeddings
+            
+        Returns:
+            List of similarity scores
+        """
+        similarities = []
+        
+        for candidate in candidate_embeddings:
+            similarity = self.calculate_similarity(query_embedding, candidate)
+            similarities.append(similarity)
+        
+        return similarities
 
-    def calculate_enhanced_similarity(self, query_embedding: np.ndarray, 
-                                    candidate_embedding: np.ndarray,
-                                    query_metadata: Optional[Dict] = None,
-                                    candidate_metadata: Optional[Dict] = None) -> float:
-        """
-        Calculate enhanced similarity between two embeddings using component weighting.
-        
-        Args:
-            query_embedding: Query embedding vector
-            candidate_embedding: Candidate embedding vector
-            query_metadata: Optional metadata for query
-            candidate_metadata: Optional metadata for candidate
+
+# Factory function for easy initialization with Ollama support
+def create_java_embedder(model_name: str = "starcoder2:3b",
+                        use_ollama: bool = True,
+                        ollama_base_url: str = None,
+                        device: Optional[str] = None,
+                        max_length: int = 8192) -> OllamaJavaCodeEmbedder:
+    """
+    Factory function to create a Java code embedder with custom configuration.
+    
+    Args:
+        model_name: Model name (Ollama format like "starcoder2:3b")
+        use_ollama: Whether to use Ollama API (default: True)
+        ollama_base_url: Ollama base URL (loads from env if None)
+        device: Device to use for transformers (auto-detect if None)
+        max_length: Maximum sequence length
             
         Returns:
-            Enhanced similarity score (0-1)
-        """
-        embedding_info = self.get_embedding_info()
-        
-        return self.similarity_enhancer.enhanced_similarity(
-            query_embedding, candidate_embedding, 
-            query_metadata, candidate_metadata
-        )
+        Configured Java code embedder instance
+    """
+    # Load from environment
+    if ollama_base_url is None and 'OLLAMA_BASE_URL' in os.environ:
+        ollama_base_url = os.environ['OLLAMA_BASE_URL']
     
-    def calculate_component_weighted_similarity(self, query_embedding: np.ndarray,
-                                              candidate_embedding: np.ndarray) -> float:
-        """
-        Calculate similarity with different weights for embedding components.
-        
-        Args:
-            query_embedding: Query embedding vector
-            candidate_embedding: Candidate embedding vector
-            
-        Returns:
-            Component-weighted similarity score
-        """
-        embedding_info = self.get_embedding_info()
-        
-        return self.similarity_enhancer.component_weighted_similarity(
-            query_embedding, candidate_embedding, embedding_info
-        )
+    config = EmbedderConfig(
+        model_name=model_name,
+        use_ollama=use_ollama,
+        ollama_base_url=ollama_base_url or "http://localhost:11434",
+        device=device,
+        max_length=max_length
+    )
     
-    def batch_enhanced_similarity(self, query_embedding: np.ndarray,
-                                candidate_embeddings: List[np.ndarray],
-                                query_metadata: Optional[Dict] = None,
-                                candidate_metadata_list: Optional[List[Dict]] = None) -> List[float]:
-        """
-        Calculate enhanced similarity for batch of candidates.
-        
-        Args:
-            query_embedding: Query embedding vector
-            candidate_embeddings: List of candidate embedding vectors
-            query_metadata: Optional query metadata
-            candidate_metadata_list: Optional list of candidate metadata
-            
-        Returns:
-            List of enhanced similarity scores
-        """
-        embedding_info = self.get_embedding_info()
-        
-        return self.similarity_enhancer.batch_enhanced_similarity(
-            query_embedding, candidate_embeddings, embedding_info,
-            query_metadata, candidate_metadata_list
-        )
-    
-    def adjust_similarity_weights(self, semantic_weight: float = 0.5,
-                                structural_weight: float = 0.3,
-                                pattern_weight: float = 0.15,
-                                graph_weight: float = 0.05):
-        """
-        Adjust the weights for different embedding components in similarity calculation.
-        
-        Args:
-            semantic_weight: Weight for semantic embedding component
-            structural_weight: Weight for structural features component
-            pattern_weight: Weight for code patterns component
-            graph_weight: Weight for dependency graph component
-        """
-        self.similarity_enhancer.adjust_similarity_weights(
-            semantic_weight, structural_weight, pattern_weight, graph_weight
-        )
-        self.logger.info(f"Updated similarity weights: semantic={semantic_weight}, "
-                        f"structural={structural_weight}, pattern={pattern_weight}, graph={graph_weight}")
-    
-    def get_similarity_explanation(self, query_embedding: np.ndarray,
-                                 candidate_embedding: np.ndarray,
-                                 query_metadata: Optional[Dict] = None,
-                                 candidate_metadata: Optional[Dict] = None) -> Dict[str, any]:
-        """
-        Get detailed explanation of similarity calculation.
-        
-        Args:
-            query_embedding: Query embedding vector
-            candidate_embedding: Candidate embedding vector
-            query_metadata: Optional query metadata
-            candidate_metadata: Optional candidate metadata
-            
-        Returns:
-            Dictionary with similarity breakdown and explanations
-        """
-        embedding_info = self.get_embedding_info()
-        
-        return self.similarity_enhancer.get_similarity_explanation(
-            query_embedding, candidate_embedding, embedding_info,
-            query_metadata, candidate_metadata
-        )
+    if use_ollama:
+        return OllamaJavaCodeEmbedder(config)
+    else:
+        # Use transformers-based embedder
+        return JavaCodeEmbedder(config)
 
 
-# Backward compatibility alias
-HybridCodeEmbedder = ImprovedCodeEmbedder 
+# Backward compatibility aliases
+HybridCodeEmbedder = OllamaJavaCodeEmbedder
+ImprovedCodeEmbedder = OllamaJavaCodeEmbedder 

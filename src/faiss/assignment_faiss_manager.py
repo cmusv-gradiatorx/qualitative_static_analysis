@@ -3,7 +3,7 @@ Assignment-Specific FAISS Manager
 
 This module manages separate FAISS indices for each assignment to improve
 efficiency and provide better contextual results. Each assignment gets its
-own dedicated FAISS index.
+own dedicated FAISS index using Java code embeddings.
 
 Author: Auto-generated
 """
@@ -24,7 +24,7 @@ except ImportError:
     print("FAISS not available. Install with: pip install faiss-cpu or faiss-gpu")
 
 from .processor import Submission
-from .embedder import HybridCodeEmbedder
+from .embedder import JavaCodeEmbedder
 from .faiss_manager import FAISSManager
 from ..utils.logger import get_logger
 
@@ -32,15 +32,13 @@ from ..utils.logger import get_logger
 class AssignmentFAISSManager:
     """Manages separate FAISS indices for each assignment"""
     
-    def __init__(self, base_index_path: str, index_type: str = "flat", 
-                 use_enhanced_similarity: bool = True):
+    def __init__(self, base_index_path: str, index_type: str = "flat"):
         """
         Initialize assignment-specific FAISS manager.
         
         Args:
             base_index_path: Base directory for storing assignment indices
             index_type: Type of FAISS index ("flat", "ivf", "hnsw")
-            use_enhanced_similarity: Whether to use enhanced similarity
         """
         self.logger = get_logger(__name__)
         
@@ -49,7 +47,6 @@ class AssignmentFAISSManager:
         
         self.base_index_path = Path(base_index_path)
         self.index_type = index_type
-        self.use_enhanced_similarity = use_enhanced_similarity
         
         # Dictionary to store individual FAISS managers for each assignment
         self.assignment_managers: Dict[str, FAISSManager] = {}
@@ -58,13 +55,13 @@ class AssignmentFAISSManager:
         self.logger.info(f"Assignment FAISS manager initialized with base path: {base_index_path}")
     
     def build_assignment_indices(self, submissions_by_assignment: Dict[str, List[Submission]], 
-                                embedder: HybridCodeEmbedder) -> Dict[str, Dict[str, Any]]:
+                                embedder: JavaCodeEmbedder) -> Dict[str, Dict[str, Any]]:
         """
         Build separate FAISS indices for each assignment.
         
         Args:
             submissions_by_assignment: Dictionary mapping assignment_id to list of submissions
-            embedder: Hybrid code embedder instance
+            embedder: Java code embedder instance
             
         Returns:
             Dictionary with build statistics for each assignment
@@ -86,10 +83,7 @@ class AssignmentFAISSManager:
                 assignment_path.mkdir(parents=True, exist_ok=True)
                 
                 # Create FAISS manager for this assignment
-                assignment_manager = FAISSManager(
-                    index_type=self.index_type,
-                    use_enhanced_similarity=self.use_enhanced_similarity
-                )
+                assignment_manager = FAISSManager(index_type=self.index_type)
                 
                 # Build index for this assignment
                 build_stats = assignment_manager.build_index(
@@ -125,9 +119,7 @@ class AssignmentFAISSManager:
     
     def search_similar_in_assignment(self, assignment_id: str, query_embedding: np.ndarray,
                                    top_k: int = 5, score_threshold: float = 0.0,
-                                   embedder: Optional[HybridCodeEmbedder] = None,
-                                   query_metadata: Optional[Dict] = None,
-                                   use_enhanced_reranking: bool = True) -> List[Dict[str, Any]]:
+                                   embedder: Optional[JavaCodeEmbedder] = None) -> List[Dict[str, Any]]:
         """
         Search for similar submissions within a specific assignment.
         
@@ -136,9 +128,7 @@ class AssignmentFAISSManager:
             query_embedding: Query embedding vector
             top_k: Number of top results to return
             score_threshold: Minimum similarity score threshold
-            embedder: Code embedder for enhanced similarity
-            query_metadata: Optional metadata for enhanced similarity
-            use_enhanced_reranking: Whether to use enhanced similarity for re-ranking
+            embedder: Java code embedder for similarity calculation
             
         Returns:
             List of similar submissions from the assignment
@@ -153,16 +143,14 @@ class AssignmentFAISSManager:
             self.logger.warning(f"Index not trained for assignment: {assignment_id}")
             return []
         
-        self.logger.debug(f"Searching in assignment '{assignment_id}' with enhanced similarity: {use_enhanced_reranking}")
+        self.logger.debug(f"Searching in assignment '{assignment_id}'")
         
         return assignment_manager.search_similar(
             query_embedding=query_embedding,
             assignment_id=assignment_id,  # This is redundant but kept for consistency
             top_k=top_k,
             score_threshold=score_threshold,
-            embedder=embedder,
-            query_metadata=query_metadata,
-            use_enhanced_reranking=use_enhanced_reranking
+            embedder=embedder
         )
     
     def search_across_assignments(self, query_embedding: np.ndarray,
@@ -170,9 +158,7 @@ class AssignmentFAISSManager:
                                 top_k_per_assignment: int = 3,
                                 overall_top_k: int = 10,
                                 score_threshold: float = 0.0,
-                                embedder: Optional[HybridCodeEmbedder] = None,
-                                query_metadata: Optional[Dict] = None,
-                                use_enhanced_reranking: bool = True) -> List[Dict[str, Any]]:
+                                embedder: Optional[JavaCodeEmbedder] = None) -> List[Dict[str, Any]]:
         """
         Search across multiple assignments and aggregate results.
         
@@ -182,9 +168,7 @@ class AssignmentFAISSManager:
             top_k_per_assignment: Number of results to get from each assignment
             overall_top_k: Total number of results to return
             score_threshold: Minimum similarity score threshold
-            embedder: Code embedder for enhanced similarity
-            query_metadata: Optional metadata for enhanced similarity
-            use_enhanced_reranking: Whether to use enhanced similarity
+            embedder: Java code embedder for similarity calculation
             
         Returns:
             Aggregated list of similar submissions from multiple assignments
@@ -205,9 +189,7 @@ class AssignmentFAISSManager:
                 query_embedding=query_embedding,
                 top_k=top_k_per_assignment,
                 score_threshold=score_threshold,
-                embedder=embedder,
-                query_metadata=query_metadata,
-                use_enhanced_reranking=use_enhanced_reranking
+                embedder=embedder
             )
             
             # Add assignment context to results
@@ -272,10 +254,7 @@ class AssignmentFAISSManager:
                 try:
                     assignment_path = Path(metadata['index_path'])
                     if assignment_path.exists():
-                        assignment_manager = FAISSManager(
-                            index_type=self.index_type,
-                            use_enhanced_similarity=self.use_enhanced_similarity
-                        )
+                        assignment_manager = FAISSManager(index_type=self.index_type)
                         assignment_manager.load_index(str(assignment_path))
                         self.assignment_managers[assignment_id] = assignment_manager
                         loaded_count += 1

@@ -2,7 +2,7 @@
 Historical Context Provider
 
 This module provides historical context integration for the autograder,
-allowing LLMs to consider similar past submissions when evaluating new ones.
+allowing LLMs to consider similar past Java submissions when evaluating new ones.
 
 Author: Auto-generated
 """
@@ -10,23 +10,24 @@ Author: Auto-generated
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 import json
+from datetime import datetime
 
 from .faiss_manager import FAISSManager
-from .embedder import HybridCodeEmbedder
+from .embedder import JavaCodeEmbedder
 from .processor import Submission
 from ..utils.logger import get_logger
 
 
 class HistoricalContextProvider:
-    """Provides historical context for LLM evaluations"""
+    """Provides historical context for LLM evaluations using Java code"""
     
-    def __init__(self, faiss_manager: FAISSManager, embedder: HybridCodeEmbedder):
+    def __init__(self, faiss_manager: FAISSManager, embedder: JavaCodeEmbedder):
         """
         Initialize the historical context provider.
         
         Args:
             faiss_manager: FAISS manager instance with trained index
-            embedder: Hybrid code embedder instance
+            embedder: Java code embedder instance
         """
         self.faiss_manager = faiss_manager
         self.embedder = embedder
@@ -41,10 +42,10 @@ class HistoricalContextProvider:
                                       top_k: int = 3,
                                       min_similarity: float = 0.3) -> Dict[str, Any]:
         """
-        Get context from similar historical submissions.
+        Get context from similar historical Java submissions.
         
         Args:
-            code_files: Current submission code files
+            code_files: Current Java submission code files
             assignment_id: Assignment identifier
             top_k: Number of similar submissions to retrieve
             min_similarity: Minimum similarity threshold
@@ -78,7 +79,7 @@ class HistoricalContextProvider:
                 return {
                     'available': True,
                     'similar_submissions': [],
-                    'message': f'No sufficiently similar submissions found (threshold: {min_similarity})'
+                    'message': f'No sufficiently similar Java submissions found (threshold: {min_similarity})'
                 }
             
             # Format context information
@@ -87,8 +88,8 @@ class HistoricalContextProvider:
                 submission_context = {
                     'similarity_score': result['similarity_score'],
                     'score': result['score'],
-                    'feedback_summary': self._summarize_feedback(result['feedback']),
-                    'feedback_full': result['feedback'],
+                    'feedback_summary': self._summarize_feedback(result['submission'].feedback),
+                    'feedback_full': result['submission'].feedback,
                     'file_names': list(result['submission'].code_files.keys()),
                     'metadata': result.get('metadata', {})
                 }
@@ -152,8 +153,8 @@ class HistoricalContextProvider:
         # Limit to max_examples
         examples = similar_submissions[:max_examples]
         
-        prompt = "**HISTORICAL CONTEXT - Similar Past Submissions:**\n\n"
-        prompt += "Consider these similar submissions from the same assignment as reference points for scoring and feedback:\n\n"
+        prompt = "**HISTORICAL CONTEXT - Similar Past Java Submissions:**\n\n"
+        prompt += "Consider these similar Java submissions from the same assignment as reference points for scoring and feedback:\n\n"
         
         for i, example in enumerate(examples, 1):
             similarity = example['similarity_score']
@@ -164,19 +165,17 @@ class HistoricalContextProvider:
             prompt += f"- **Score Received:** {score:.1f}\n"
             prompt += f"- **Key Feedback Points:** {feedback_summary}\n"
             
-            # Add metadata if available
-            if example.get('metadata'):
-                metadata = example['metadata']
-                if 'complexity' in metadata:
-                    prompt += f"- **Complexity Level:** {metadata['complexity']}\n"
-                if 'approach' in metadata:
-                    prompt += f"- **Approach Used:** {metadata['approach']}\n"
+            # Add file information
+            file_names = example.get('file_names', [])
+            java_files = [f for f in file_names if f.lower().endswith('.java')]
+            if java_files:
+                prompt += f"- **Java Files:** {', '.join(java_files)}\n"
             
             prompt += "\n"
         
         prompt += "**Instructions for Using Historical Context:**\n"
         prompt += "- Use these examples as calibration points for consistent scoring\n"
-        prompt += "- Consider similar strengths and weaknesses in your evaluation\n"
+        prompt += "- Consider similar Java coding patterns and approaches in your evaluation\n"
         prompt += "- Maintain fairness while learning from past evaluation patterns\n"
         prompt += "- Do not directly copy feedback but use insights for guidance\n\n"
         
@@ -199,6 +198,12 @@ class HistoricalContextProvider:
             scores = [sub.score for sub in assignment_submissions if sub.score > 0]
             feedback_lengths = [len(sub.feedback) for sub in assignment_submissions if sub.feedback.strip()]
             
+            # Count Java files
+            java_files_counts = []
+            for sub in assignment_submissions:
+                java_count = sum(1 for f in sub.code_files.keys() if f.lower().endswith('.java'))
+                java_files_counts.append(java_count)
+            
             stats = {
                 'available': True,
                 'total_submissions': len(assignment_submissions),
@@ -212,6 +217,11 @@ class HistoricalContextProvider:
                 'feedback_statistics': {
                     'avg_feedback_length': sum(feedback_lengths) / len(feedback_lengths) if feedback_lengths else 0,
                     'submissions_with_feedback': len(feedback_lengths)
+                },
+                'java_files_statistics': {
+                    'avg_java_files': sum(java_files_counts) / len(java_files_counts) if java_files_counts else 0,
+                    'max_java_files': max(java_files_counts) if java_files_counts else 0,
+                    'min_java_files': min(java_files_counts) if java_files_counts else 0
                 }
             }
             
@@ -225,10 +235,10 @@ class HistoricalContextProvider:
                                     assignment_id: str,
                                     similarity_threshold: float = 0.8) -> Dict[str, Any]:
         """
-        Analyze how unique a submission is compared to historical ones.
+        Analyze how unique a Java submission is compared to historical ones.
         
         Args:
-            code_files: Current submission code files
+            code_files: Current Java submission code files
             assignment_id: Assignment identifier
             similarity_threshold: Threshold for considering submissions too similar
             
@@ -270,11 +280,11 @@ class HistoricalContextProvider:
             
             # Add uniqueness assessment
             if analysis['max_similarity'] > similarity_threshold:
-                analysis['uniqueness_assessment'] = 'LOW - Highly similar to existing submission(s)'
+                analysis['uniqueness_assessment'] = 'LOW - Highly similar to existing Java submission(s)'
             elif analysis['max_similarity'] > 0.6:
-                analysis['uniqueness_assessment'] = 'MEDIUM - Some similarity to existing submissions'
+                analysis['uniqueness_assessment'] = 'MEDIUM - Some similarity to existing Java submissions'
             else:
-                analysis['uniqueness_assessment'] = 'HIGH - Unique approach compared to historical submissions'
+                analysis['uniqueness_assessment'] = 'HIGH - Unique Java approach compared to historical submissions'
             
             return analysis
             
@@ -291,7 +301,7 @@ class HistoricalContextProvider:
         Get formatted historical context for integration with PromptManager.
         
         Args:
-            code_files: Current submission code files
+            code_files: Current Java submission code files
             assignment_id: Assignment identifier
             include_stats: Whether to include assignment statistics
             include_examples: Whether to include similar examples
@@ -306,7 +316,7 @@ class HistoricalContextProvider:
         if include_stats:
             stats = self.get_assignment_statistics(assignment_id)
             if stats.get('available'):
-                stats_text = f"**Assignment Historical Statistics:**\n"
+                stats_text = f"**Assignment Historical Statistics (Java):**\n"
                 stats_text += f"- Total Past Submissions: {stats['total_submissions']}\n"
                 stats_text += f"- Submissions with Scores: {stats['submissions_with_scores']}\n"
                 
@@ -314,6 +324,10 @@ class HistoricalContextProvider:
                     score_stats = stats['score_statistics']
                     stats_text += f"- Average Score: {score_stats['mean']:.1f}\n"
                     stats_text += f"- Score Range: {score_stats['min']:.1f} - {score_stats['max']:.1f}\n"
+                
+                if 'java_files_statistics' in stats:
+                    java_stats = stats['java_files_statistics']
+                    stats_text += f"- Average Java Files per Submission: {java_stats['avg_java_files']:.1f}\n"
                 
                 stats_text += "\n"
                 context_parts.append(stats_text)
@@ -349,11 +363,13 @@ class HistoricalContextProvider:
             
             analysis = {
                 'assignment_id': assignment_id,
-                'timestamp': self.logger.handlers[0].formatter.formatTime() if self.logger.handlers else '',
+                'java_files_analyzed': [f for f in code_files.keys() if f.lower().endswith('.java')],
+                'timestamp': datetime.now().isoformat(),
                 'similar_submissions_context': similar_context,
                 'assignment_statistics': assignment_stats,
                 'uniqueness_analysis': uniqueness_analysis,
-                'faiss_index_stats': self.faiss_manager.get_statistics()
+                'faiss_index_stats': self.faiss_manager.get_statistics(),
+                'embedder_info': self.embedder.get_embedding_info()
             }
             
             with open(output_path, 'w', encoding='utf-8') as f:

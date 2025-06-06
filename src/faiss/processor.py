@@ -1,8 +1,8 @@
 """
 Submission Processing
 
-This module handles extraction of submissions from ZIP files and processing
-of code files along with metadata (scores, feedback).
+This module handles extraction of submissions from individual ZIP files organized in task folders
+and processing of code files along with metadata (scores, feedback).
 
 Author: Auto-generated
 """
@@ -40,18 +40,18 @@ class Submission:
     metadata: Optional[Dict[str, Any]] = None
 
 
-class SubmissionProcessor:
-    """Process zip file and extract submissions with metadata"""
+class TaskFolderProcessor:
+    """Process individual student ZIP files from task folders"""
     
-    def __init__(self, zip_path: str, assignment_id: Optional[str] = None):
+    def __init__(self, task_folder_path: str, assignment_id: Optional[str] = None):
         """
-        Initialize submission processor.
+        Initialize task folder processor.
         
         Args:
-            zip_path: Path to the ZIP file containing submissions
+            task_folder_path: Path to the task folder containing individual ZIP files
             assignment_id: Optional assignment ID (will be inferred if not provided)
         """
-        self.zip_path = Path(zip_path)
+        self.task_folder_path = Path(task_folder_path)
         self.assignment_id = assignment_id or self._infer_assignment_id()
         self.submissions = []
         self.logger = get_logger(__name__)
@@ -64,233 +64,162 @@ class SubmissionProcessor:
             self.analyzer = None
             self.supported_extensions = {'.java'}  # Fallback to Java only
         
-        # Validate ZIP file exists
-        if not self.zip_path.exists():
-            raise FileNotFoundError(f"ZIP file not found: {self.zip_path}")
+        # Validate task folder exists
+        if not self.task_folder_path.exists():
+            raise FileNotFoundError(f"Task folder not found: {self.task_folder_path}")
     
     def _infer_assignment_id(self) -> str:
-        """Infer assignment ID from ZIP file name"""
-        filename = self.zip_path.stem
+        """Infer assignment ID from task folder name"""
+        folder_name = self.task_folder_path.name
         
-        # Try to extract common assignment patterns
+        # Try to extract task patterns
         patterns = [
-            r'assignment[_-](\d+)',
-            r'hw[_-](\d+)', 
-            r'project[_-](\d+)',
-            r'milestone[_-](\d+)',
-            r'([a-zA-Z]+)[-_]?(\d+)'
+            r'task(\d+)_(.+)',  # task1_SOLID
+            r'task(\d+)',       # task1
+            r'assignment(\d+)',  # assignment1
+            r'hw(\d+)',         # hw1
+            r'project(\d+)',    # project1
         ]
         
         for pattern in patterns:
-            match = re.search(pattern, filename, re.IGNORECASE)
+            match = re.search(pattern, folder_name, re.IGNORECASE)
             if match:
-                return match.group(0)
+                return folder_name
         
-        # Fallback to filename
-        return filename
+        # Fallback to folder name
+        return folder_name
     
-    def extract_submissions(self) -> List[Submission]:
+    def extract_all_submissions(self) -> List[Submission]:
         """
-        Extract all submissions from ZIP file.
+        Extract all submissions from individual ZIP files in the task folder.
         
         Returns:
             List of Submission objects
         """
-        self.logger.info(f"Extracting submissions from {self.zip_path}")
+        self.logger.info(f"Processing task folder: {self.task_folder_path}")
         
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Extract ZIP file
-            with zipfile.ZipFile(self.zip_path, 'r') as zip_ref:
-                zip_ref.extractall(temp_dir)
-            
-            # Process extracted content
-            self._process_extracted_content(temp_dir)
+        # Find all ZIP files in the task folder
+        zip_files = list(self.task_folder_path.glob("*.zip"))
+        self.logger.info(f"Found {len(zip_files)} ZIP files in {self.task_folder_path.name}")
         
-        self.logger.info(f"Processed {len(self.submissions)} submissions")
+        if not zip_files:
+            self.logger.warning(f"No ZIP files found in {self.task_folder_path}")
+            return []
+        
+        # Process each ZIP file as an individual submission
+        for zip_file in zip_files:
+            try:
+                self.logger.debug(f"Processing ZIP file: {zip_file.name}")
+                submission = self._process_individual_zip(zip_file)
+                if submission:
+                    self.submissions.append(submission)
+            except Exception as e:
+                self.logger.error(f"Error processing {zip_file.name}: {str(e)}")
+                continue
+        
+        self.logger.info(f"Successfully processed {len(self.submissions)} submissions from {self.assignment_id}")
         return self.submissions
     
-    def _process_extracted_content(self, extract_path: str):
-        """Process the extracted content and identify submissions"""
-        extract_dir = Path(extract_path)
+    def _process_individual_zip(self, zip_file: Path) -> Optional[Submission]:
+        """
+        Process an individual student ZIP file.
         
-        # Look for submission folders/files
-        items = list(extract_dir.iterdir())
-        
-        if len(items) == 1 and items[0].is_dir():
-            # Single top-level directory - look inside
-            self._process_directory_structure(items[0])
-        else:
-            # Multiple items at root level
-            for item in items:
-                if item.is_dir():
-                    # Skip macOS metadata directories
-                    if item.name.startswith('__MACOSX'):
-                        continue
-                    # Always use directory structure processing for directories
-                    self._process_directory_structure(item)
-                elif item.suffix in self.supported_extensions:
-                    # Single code file submission
-                    self._process_single_file_submission(item, extract_dir)
-                elif item.suffix == '.zip':
-                    # Handle ZIP files at root level
-                    self._process_nested_zip(item)
-    
-    def _process_directory_structure(self, base_dir: Path):
-        """Process directory structure to find submissions"""
-        # Look for student submission folders
-        for item in base_dir.iterdir():
-            if item.is_dir():
-                # Check if this looks like a student submission
-                if self._is_submission_folder(item):
-                    self._process_submission_folder(item)
-                else:
-                    # Recurse into subdirectories
-                    self._process_directory_structure(item)
-            elif item.suffix == '.zip':
-                # Handle nested ZIP files
-                self._process_nested_zip(item)
-            elif item.suffix in self.supported_extensions:
-                # Code file at this level
-                self._process_single_file_submission(item, base_dir)
-    
-    def _process_nested_zip(self, zip_path: Path):
-        """Process a nested ZIP file (student submission)"""
-        self.logger.debug(f"Processing nested ZIP: {zip_path.name}")
-        
-        # Create temporary directory for extraction
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_extract_dir = Path(temp_dir) / f"nested_{zip_path.stem}"
-            temp_extract_dir.mkdir(exist_ok=True)
+        Args:
+            zip_file: Path to the ZIP file
             
+        Returns:
+            Submission object or None if processing failed
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
             try:
-                # Extract the nested ZIP
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(temp_extract_dir)
+                # Extract ZIP file
+                with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                    zip_ref.extractall(temp_dir)
                 
-                # Process the extracted contents as a submission folder
-                self._process_submission_folder(temp_extract_dir)
+                # Extract student ID from filename
+                student_id = self._extract_student_id(zip_file.name)
                 
+                # Process extracted content
+                code_files = {}
+                score = 0.0
+                feedback = ""
+                metadata = {'zip_file': zip_file.name, 'student_id': student_id}
+                
+                # Recursively find all files
+                for root, dirs, files in os.walk(temp_dir):
+                    # Skip macOS metadata directories
+                    if '__MACOSX' in root:
+                        continue
+                        
+                    for file in files:
+                        file_path = Path(root) / file
+                        relative_path = file_path.relative_to(temp_dir)
+                        filename = str(relative_path)
+                        
+                        # Process different file types
+                        if file_path.suffix in self.supported_extensions:
+                            # Code file (Java, Python, etc.)
+                            try:
+                                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                    code_files[filename] = f.read()
+                            except Exception as e:
+                                self.logger.warning(f"Failed to read {file_path}: {e}")
+                                
+                        elif self._is_feedback_file(file_path):
+                            # Feedback/grading file
+                            try:
+                                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                    content = f.read()
+                                    feedback = content
+                                    
+                                    # Try to extract score
+                                    extracted_score = self._extract_score_from_text(content)
+                                    if extracted_score is not None:
+                                        score = extracted_score
+                                        
+                            except Exception as e:
+                                self.logger.warning(f"Failed to read feedback file {file_path}: {e}")
+                
+                # Create submission if we found code files
+                if code_files:
+                    submission = Submission(
+                        assignment_id=self.assignment_id,
+                        file_name=student_id,
+                        code_files=code_files,
+                        score=score,
+                        feedback=feedback,
+                        metadata=metadata
+                    )
+                    return submission
+                else:
+                    # Create more descriptive warning message
+                    supported_exts = ', '.join(self.supported_extensions)
+                    self.logger.warning(f"No supported code files ({supported_exts}) found in {zip_file.name}")
+                    return None
+                    
             except Exception as e:
-                self.logger.warning(f"Failed to process nested ZIP {zip_path.name}: {e}")
+                self.logger.error(f"Failed to process ZIP file {zip_file.name}: {str(e)}")
+                return None
     
-    def _is_submission_folder(self, folder: Path) -> bool:
-        """Check if a folder contains a submission"""
-        # Look for supported code files (Python, Java, etc.)
-        for ext in self.supported_extensions:
-            code_files = list(folder.glob(f'**/*{ext}'))
-            if code_files:
-                return True
+    def _extract_student_id(self, zip_filename: str) -> str:
+        """Extract student ID from ZIP filename"""
+        # Remove .zip extension
+        base_name = zip_filename.replace('.zip', '').replace('.rar', '')
         
-        # Look for common submission indicators
-        submission_indicators = [
-            'main.py', 'solution.py', 'assignment.py',
-            'Main.java', 'Solution.java', 'App.java',
-            'src', 'code', 'submission'
+        # Common patterns for student submissions
+        patterns = [
+            r'^([a-zA-Z]+[a-zA-Z0-9]*)',  # Start with letters, then letters/numbers
+            r'([a-zA-Z0-9]+)_\d+_\d+',   # student_id_number_number format
+            r'^([^_]+)',                  # Everything before first underscore
         ]
         
-        for item in folder.iterdir():
-            if item.name.lower() in [s.lower() for s in submission_indicators]:
-                return True
+        for pattern in patterns:
+            match = re.search(pattern, base_name)
+            if match:
+                return match.group(1)
         
-        return False
-    
-    def _process_submission_folder(self, folder_path: Path):
-        """Process individual submission folder"""
-        self.logger.debug(f"Processing submission folder: {folder_path.name}")
-        
-        code_files = {}
-        score = 0.0
-        feedback = ""
-        metadata = {}
-        
-        # Recursively find all files
-        for file_path in folder_path.rglob('*'):
-            if not file_path.is_file():
-                continue
-                
-            relative_path = file_path.relative_to(folder_path)
-            filename = str(relative_path)
-            
-            # Process different file types
-            if file_path.suffix in self.supported_extensions:
-                # Code file (Python, Java, etc.)
-                try:
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        code_files[filename] = f.read()
-                except Exception as e:
-                    self.logger.warning(f"Failed to read {file_path}: {e}")
-                    
-            elif self._is_feedback_file(file_path):
-                # Feedback/grading file
-                try:
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read()
-                        feedback = content
-                        
-                        # Try to extract score
-                        extracted_score = self._extract_score_from_text(content)
-                        if extracted_score is not None:
-                            score = extracted_score
-                            
-                except Exception as e:
-                    self.logger.warning(f"Failed to read feedback file {file_path}: {e}")
-                    
-            # elif file_path.suffix == '.json':
-            #     # JSON metadata file
-            #     try:
-            #         with open(file_path, 'r', encoding='utf-8') as f:
-            #             json_data = json.load(f)
-            #             metadata.update(json_data)
-                        
-            #             # Look for score in JSON
-            #             if 'score' in json_data:
-            #                 score = float(json_data['score'])
-            #             elif 'grade' in json_data:
-            #                 score = float(json_data['grade'])
-                            
-            #     except Exception as e:
-            #         self.logger.warning(f"Failed to read JSON file {file_path}: {e}")
-        
-        # Create submission if we found code files
-        if code_files:
-            submission = Submission(
-                assignment_id=self.assignment_id,
-                file_name=folder_path.name,
-                code_files=code_files,
-                score=score,
-                feedback=feedback,
-                metadata=metadata
-            )
-            self.submissions.append(submission)
-        else:
-            # Create more descriptive warning message
-            supported_exts = ', '.join(self.supported_extensions)
-            self.logger.warning(f"No supported code files ({supported_exts}) found in {folder_path.name}")
-    
-    def _process_single_file_submission(self, file_path: Path, base_dir: Path):
-        """Process a single code file as a submission"""
-        # Check if it's a supported file type
-        if file_path.suffix not in self.supported_extensions:
-            return
-            
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            
-            code_files = {file_path.name: content}
-            
-            submission = Submission(
-                assignment_id=self.assignment_id,
-                file_name=file_path.stem,
-                code_files=code_files,
-                score=0.0,  # No score available for single files
-                feedback="",
-                metadata={'type': 'single_file'}
-            )
-            self.submissions.append(submission)
-            
-        except Exception as e:
-            self.logger.warning(f"Failed to process single file {file_path}: {e}")
+        # Fallback to base filename
+        return base_name
     
     def _is_feedback_file(self, file_path: Path) -> bool:
         """Check if a file contains feedback/grading information"""
@@ -325,33 +254,6 @@ class SubmissionProcessor:
         
         return None
     
-    def add_submission_with_scores(self, submission_data: Dict[str, Any]) -> Submission:
-        """
-        Add a submission with predefined scores and feedback.
-        
-        Args:
-            submission_data: Dictionary containing submission information
-            
-        Returns:
-            Created Submission object
-        """
-        required_fields = ['file_name', 'code_files']
-        for field in required_fields:
-            if field not in submission_data:
-                raise ValueError(f"Missing required field: {field}")
-        
-        submission = Submission(
-            assignment_id=submission_data.get('assignment_id', self.assignment_id),
-            file_name=submission_data['file_name'],
-            code_files=submission_data['code_files'],
-            score=submission_data.get('score', 0.0),
-            feedback=submission_data.get('feedback', ''),
-            metadata=submission_data.get('metadata', {})
-        )
-        
-        self.submissions.append(submission)
-        return submission
-    
     def get_submission_statistics(self) -> Dict[str, Any]:
         """Get statistics about processed submissions"""
         if not self.submissions:
@@ -375,59 +277,125 @@ class SubmissionProcessor:
             'total_code_files': sum(file_counts),
             'assignment_id': self.assignment_id
         }
+
+
+class MultiFolderProcessor:
+    """Process multiple task folders to extract submissions"""
     
-    def save_submissions_metadata(self, filepath: str):
-        """Save submission metadata to JSON file"""
-        metadata = {
-            'assignment_id': self.assignment_id,
-            'zip_path': str(self.zip_path),
-            'statistics': self.get_submission_statistics(),
-            'submissions': [
-                {
-                    'file_name': sub.file_name,
-                    'score': sub.score,
-                    'feedback_length': len(sub.feedback),
-                    'num_code_files': len(sub.code_files),
-                    'code_file_names': list(sub.code_files.keys()),
-                    'metadata': sub.metadata
-                }
-                for sub in self.submissions
-            ]
-        }
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2)
-        
-        self.logger.info(f"Submission metadata saved to {filepath}")
-    
-    def filter_submissions(self, min_score: Optional[float] = None, 
-                          has_feedback: bool = False,
-                          min_files: int = 1) -> List[Submission]:
+    def __init__(self, data_root_path: str):
         """
-        Filter submissions based on criteria.
+        Initialize multi-folder processor.
         
         Args:
-            min_score: Minimum score requirement
-            has_feedback: Whether submission must have feedback
-            min_files: Minimum number of code files
-            
-        Returns:
-            Filtered list of submissions
+            data_root_path: Path to the root data directory containing task folders
         """
-        filtered = []
+        self.data_root_path = Path(data_root_path)
+        self.logger = get_logger(__name__)
         
-        for submission in self.submissions:
-            # Check criteria
-            if min_score is not None and submission.score < min_score:
-                continue
-                
-            if has_feedback and not submission.feedback.strip():
-                continue
-                
-            if len(submission.code_files) < min_files:
-                continue
-            
-            filtered.append(submission)
+        if not self.data_root_path.exists():
+            raise FileNotFoundError(f"Data root path not found: {self.data_root_path}")
+    
+    def find_task_folders(self) -> List[Path]:
+        """Find all task folders in the data root directory"""
+        task_folders = []
         
-        self.logger.info(f"Filtered {len(self.submissions)} -> {len(filtered)} submissions")
-        return filtered 
+        for item in self.data_root_path.iterdir():
+            if item.is_dir() and not item.name.startswith('.'):
+                # Check if it looks like a task folder
+                if any(pattern in item.name.lower() for pattern in ['task', 'assignment', 'hw', 'project']):
+                    task_folders.append(item)
+        
+        self.logger.info(f"Found {len(task_folders)} task folders: {[f.name for f in task_folders]}")
+        return task_folders
+    
+    def process_all_tasks(self) -> Dict[str, List[Submission]]:
+        """
+        Process all task folders and return submissions grouped by assignment.
+        
+        Returns:
+            Dictionary mapping assignment_id to list of submissions
+        """
+        task_folders = self.find_task_folders()
+        all_submissions = {}
+        
+        for task_folder in task_folders:
+            try:
+                processor = TaskFolderProcessor(str(task_folder))
+                submissions = processor.extract_all_submissions()
+                
+                assignment_id = processor.assignment_id
+                all_submissions[assignment_id] = submissions
+                
+                self.logger.info(f"Processed {len(submissions)} submissions for {assignment_id}")
+                
+            except Exception as e:
+                self.logger.error(f"Failed to process task folder {task_folder.name}: {str(e)}")
+                continue
+        
+        return all_submissions
+    
+    def get_overall_statistics(self, submissions_by_assignment: Dict[str, List[Submission]]) -> Dict[str, Any]:
+        """Get overall statistics across all assignments"""
+        total_submissions = sum(len(subs) for subs in submissions_by_assignment.values())
+        total_assignments = len(submissions_by_assignment)
+        
+        assignment_stats = {}
+        for assignment_id, submissions in submissions_by_assignment.items():
+            if submissions:
+                # Calculate statistics directly without creating a dummy processor
+                scores = [s.score for s in submissions if s.score > 0]
+                file_counts = [len(s.code_files) for s in submissions]
+                
+                assignment_stats[assignment_id] = {
+                    'total_submissions': len(submissions),
+                    'avg_score': np.mean(scores) if scores else 0.0,
+                    'score_range': (min(scores), max(scores)) if scores else (0.0, 0.0),
+                    'submissions_with_scores': len(scores),
+                    'avg_files_per_submission': np.mean(file_counts),
+                    'total_code_files': sum(file_counts),
+                    'assignment_id': assignment_id
+                }
+        
+        return {
+            'total_assignments': total_assignments,
+            'total_submissions': total_submissions,
+            'assignment_stats': assignment_stats,
+            'assignments': list(submissions_by_assignment.keys())
+        }
+
+
+# Backward compatibility class
+class SubmissionProcessor(TaskFolderProcessor):
+    """Backward compatibility wrapper for TaskFolderProcessor"""
+    
+    def __init__(self, path: str, assignment_id: Optional[str] = None):
+        """
+        Initialize submission processor with backward compatibility.
+        
+        Args:
+            path: Path to either a ZIP file (old format) or task folder (new format)
+            assignment_id: Optional assignment ID
+        """
+        path_obj = Path(path)
+        
+        if path_obj.is_file() and path_obj.suffix == '.zip':
+            # Old format: single ZIP file
+            self.logger = get_logger(__name__)
+            self.logger.warning("Single ZIP file detected - using legacy mode")
+            self._init_legacy_mode(path, assignment_id)
+        else:
+            # New format: task folder
+            super().__init__(path, assignment_id)
+    
+    def _init_legacy_mode(self, zip_path: str, assignment_id: Optional[str] = None):
+        """Initialize in legacy mode for single ZIP files"""
+        # This would implement the old single ZIP processing logic
+        # For now, raise an error to encourage using the new format
+        raise NotImplementedError(
+            "Legacy single ZIP file processing is deprecated. "
+            "Please organize your data in task folders with individual ZIP files."
+        )
+    
+    def extract_submissions(self) -> List[Submission]:
+        """Extract submissions - delegates to new method"""
+        return self.extract_all_submissions() 

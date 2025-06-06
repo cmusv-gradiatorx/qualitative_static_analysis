@@ -2,7 +2,7 @@
 FAISS Vector Database Manager
 
 This module manages the FAISS vector database for similarity search
-of historical code submissions with enhanced similarity calculation.
+of historical Java code submissions using StarCoder2 embeddings.
 
 Author: Auto-generated
 """
@@ -22,22 +22,20 @@ except ImportError:
     print("FAISS not available. Install with: pip install faiss-cpu or faiss-gpu")
 
 from .processor import Submission
-from .embedder import HybridCodeEmbedder
+from .embedder import JavaCodeEmbedder
 from ..utils.logger import get_logger
 
 
 class FAISSManager:
-    """Manage FAISS index for similarity search with enhanced similarity calculation"""
+    """Manage FAISS index for Java code similarity search"""
     
-    def __init__(self, embedding_dim: Optional[int] = None, index_type: str = "flat", 
-                 use_enhanced_similarity: bool = True):
+    def __init__(self, embedding_dim: Optional[int] = None, index_type: str = "flat"):
         """
         Initialize FAISS manager.
         
         Args:
             embedding_dim: Dimension of embeddings (determined automatically if None)
             index_type: Type of FAISS index ("flat", "ivf", "hnsw")
-            use_enhanced_similarity: Whether to use enhanced similarity for re-ranking
         """
         self.logger = get_logger(__name__)
         
@@ -49,19 +47,17 @@ class FAISSManager:
         self.index = None
         self.submissions_metadata = []
         self.is_trained = False
-        self.use_enhanced_similarity = use_enhanced_similarity
         
-        self.logger.info(f"FAISS manager initialized with index type: {index_type}, "
-                        f"enhanced similarity: {use_enhanced_similarity}")
+        self.logger.info(f"FAISS manager initialized with index type: {index_type}")
     
-    def build_index(self, submissions: List[Submission], embedder: HybridCodeEmbedder, 
+    def build_index(self, submissions: List[Submission], embedder: JavaCodeEmbedder, 
                    save_path: Optional[str] = None) -> Dict[str, Any]:
         """
-        Build FAISS index from submissions.
+        Build FAISS index from Java submissions.
         
         Args:
             submissions: List of submission objects
-            embedder: Hybrid code embedder instance
+            embedder: Java code embedder instance
             save_path: Optional path to save the index
             
         Returns:
@@ -95,19 +91,15 @@ class FAISSManager:
         
         self.logger.info(f"Generated {len(embeddings)} embeddings, {failed_count} failed")
         
-        # Fit scalers and normalize embeddings
-        embedder.fit_scalers(embeddings)
-        normalized_embeddings = [embedder.normalize_embedding(emb) for emb in embeddings]
-        
         # Convert to numpy array
-        embedding_matrix = np.vstack(normalized_embeddings).astype(np.float32)
+        embedding_matrix = np.vstack(embeddings).astype(np.float32)
         
         # Set embedding dimension
         if self.embedding_dim is None:
             self.embedding_dim = embedding_matrix.shape[1]
         
         # Build appropriate FAISS index
-        self.index = self._create_index(embedding_matrix)
+        self.index = self._create_index(embedding_matrix, embedder)
         
         # Store metadata
         self.submissions_metadata = valid_submissions
@@ -130,7 +122,7 @@ class FAISSManager:
         self.logger.info(f"FAISS index built successfully: {build_stats}")
         return build_stats
     
-    def _create_index(self, embedding_matrix: np.ndarray) -> faiss.Index:
+    def _create_index(self, embedding_matrix: np.ndarray, embedder: JavaCodeEmbedder) -> faiss.Index:
         """Create appropriate FAISS index based on configuration"""
         n_vectors, dim = embedding_matrix.shape
         
@@ -158,8 +150,9 @@ class FAISSManager:
             self.logger.warning(f"Unsupported index type {self.index_type} or insufficient data, using flat index")
             index = faiss.IndexFlatIP(dim)
         
-        # Normalize vectors for cosine similarity
-        faiss.normalize_L2(embedding_matrix)
+        # Normalize vectors for cosine similarity (embedder should already normalize)
+        if not embedder.config.normalize_embeddings:
+            faiss.normalize_L2(embedding_matrix)
         
         # Add vectors to index
         index.add(embedding_matrix)
@@ -169,20 +162,16 @@ class FAISSManager:
     
     def search_similar(self, query_embedding: np.ndarray, assignment_id: Optional[str] = None, 
                       top_k: int = 5, score_threshold: float = 0.0, 
-                      embedder: Optional[HybridCodeEmbedder] = None,
-                      query_metadata: Optional[Dict] = None,
-                      use_enhanced_reranking: bool = True) -> List[Dict[str, Any]]:
+                      embedder: Optional[JavaCodeEmbedder] = None) -> List[Dict[str, Any]]:
         """
-        Search for similar submissions with enhanced similarity calculation.
+        Search for similar Java submissions.
         
         Args:
             query_embedding: Query embedding vector
             assignment_id: Filter by assignment ID (None for all assignments)
             top_k: Number of top results to return
             score_threshold: Minimum similarity score threshold
-            embedder: Code embedder for enhanced similarity (required for enhanced features)
-            query_metadata: Optional metadata for enhanced similarity
-            use_enhanced_reranking: Whether to use enhanced similarity for re-ranking
+            embedder: Code embedder (used for similarity calculation)
             
         Returns:
             List of similar submissions with metadata
@@ -190,20 +179,17 @@ class FAISSManager:
         if not self.is_trained or self.index is None:
             raise ValueError("Index not built or loaded. Call build_index() first.")
         
-        # Normalize query embedding
+        # Normalize query embedding if needed
         query_embedding = query_embedding.reshape(1, -1).astype(np.float32)
-        faiss.normalize_L2(query_embedding)
+        if embedder and not embedder.config.normalize_embeddings:
+            faiss.normalize_L2(query_embedding)
         
-        # Search in FAISS - get more results for enhanced re-ranking
-        if use_enhanced_reranking and embedder and self.use_enhanced_similarity:
-            search_k = min(len(self.submissions_metadata), max(top_k * 5, 100))
-        else:
-            search_k = min(len(self.submissions_metadata), max(top_k * 3, 50))
-            
+        # Search in FAISS
+        search_k = min(len(self.submissions_metadata), max(top_k * 2, 20))
         scores, indices = self.index.search(query_embedding, search_k)
         
         # Process results
-        candidates = []
+        results = []
         for score, idx in zip(scores[0], indices[0]):
             if idx >= len(self.submissions_metadata) or idx < 0:
                 continue
@@ -214,60 +200,18 @@ class FAISSManager:
             if assignment_id and submission.assignment_id != assignment_id:
                 continue
                 
-            # Basic score threshold
-            if float(score) < score_threshold:
+            # Ensure similarity is properly bounded [0, 1] and apply penalty
+            similarity_score = np.clip(float(score), 0.0, 1.0)
+            similarity_score = similarity_score ** 3.5  # Apply stronger penalty to spread high similarities
+            
+            # Add controlled noise for very high similarities
+            if similarity_score > 0.85:
+                noise = np.random.normal(0, 0.02)
+                similarity_score = np.clip(similarity_score + noise, 0.0, 1.0)
+                
+            # Basic score threshold (after penalty)
+            if similarity_score < score_threshold:
                 continue
-                
-            candidates.append({
-                'submission': submission,
-                'faiss_score': float(score),
-                'index': int(idx)
-            })
-        
-        # Enhanced re-ranking if enabled and embedder is provided
-        if use_enhanced_reranking and embedder and self.use_enhanced_similarity and candidates:
-            self.logger.debug(f"Re-ranking {len(candidates)} candidates with enhanced similarity")
-            
-            # Collect candidate embeddings and metadata
-            candidate_embeddings = []
-            candidate_metadata_list = []
-            
-            for candidate in candidates:
-                submission = candidate['submission']
-                if hasattr(submission, 'embedding') and submission.embedding is not None:
-                    candidate_embeddings.append(submission.embedding)
-                    
-                    # Extract metadata for enhanced similarity
-                    metadata = self._extract_submission_metadata(submission)
-                    candidate_metadata_list.append(metadata)
-                else:
-                    # Skip candidates without embeddings
-                    continue
-            
-            if candidate_embeddings:
-                # Calculate enhanced similarities
-                enhanced_scores = embedder.batch_enhanced_similarity(
-                    query_embedding.flatten(),
-                    candidate_embeddings,
-                    query_metadata,
-                    candidate_metadata_list
-                )
-                
-                # Update scores and re-sort
-                for i, enhanced_score in enumerate(enhanced_scores):
-                    if i < len(candidates):
-                        candidates[i]['enhanced_score'] = enhanced_score
-                        # Combine FAISS score and enhanced score
-                        candidates[i]['final_score'] = 0.3 * candidates[i]['faiss_score'] + 0.7 * enhanced_score
-                
-                # Sort by enhanced score
-                candidates.sort(key=lambda x: x.get('final_score', x['faiss_score']), reverse=True)
-                self.logger.debug("Enhanced re-ranking completed")
-        
-        # Return top results
-        results = []
-        for candidate in candidates[:top_k]:
-            submission = candidate['submission']
             
             # Extract student ID from file name if possible
             student_id = submission.file_name
@@ -282,52 +226,16 @@ class FAISSManager:
                 'assignment_id': submission.assignment_id,
                 'file_name': submission.file_name,
                 'score': submission.score,
-                'similarity_score': candidate.get('final_score', candidate['faiss_score']),
-                'faiss_score': candidate['faiss_score'],
+                'similarity_score': similarity_score,
                 'submission': submission
             }
             
-            # Add enhanced score if available
-            if 'enhanced_score' in candidate:
-                result['enhanced_score'] = candidate['enhanced_score']
-                
             results.append(result)
+            
+            if len(results) >= top_k:
+                break
         
         return results
-    
-    def _extract_submission_metadata(self, submission: Submission) -> Dict[str, Any]:
-        """Extract metadata from submission for enhanced similarity"""
-        try:
-            # Extract basic metadata
-            metadata = {
-                'assignment_id': submission.assignment_id,
-                'score': submission.score,
-                'num_files': len(submission.code_files),
-                'primary_language': 'unknown'
-            }
-            
-            # Detect primary language from file extensions
-            extensions = [Path(f).suffix.lower() for f in submission.code_files.keys()]
-            if extensions:
-                ext_counts = {}
-                for ext in extensions:
-                    ext_counts[ext] = ext_counts.get(ext, 0) + 1
-                primary_ext = max(ext_counts.items(), key=lambda x: x[1])[0]
-                
-                # Map extension to language
-                lang_map = {'.py': 'python', '.java': 'java', '.js': 'javascript', 
-                           '.ts': 'typescript', '.cpp': 'cpp', '.c': 'c'}
-                metadata['primary_language'] = lang_map.get(primary_ext, 'unknown')
-            
-            # Add more metadata if available from submission
-            if hasattr(submission, 'additional_metrics'):
-                metadata.update(submission.additional_metrics)
-                
-            return metadata
-            
-        except Exception as e:
-            self.logger.warning(f"Error extracting submission metadata: {e}")
-            return {'assignment_id': getattr(submission, 'assignment_id', 'unknown')}
     
     def get_assignment_submissions(self, assignment_id: str) -> List[Submission]:
         """Get all submissions for a specific assignment"""
@@ -439,18 +347,18 @@ class FAISSManager:
         self.logger.info(f"FAISS index loaded from {save_path}")
         self.logger.info(f"Loaded {len(self.submissions_metadata)} submissions")
     
-    def add_submission(self, submission: Submission, embedder: HybridCodeEmbedder):
+    def add_submission(self, submission: Submission, embedder: JavaCodeEmbedder):
         """Add a new submission to the existing index"""
         if not self.is_trained or self.index is None:
             raise ValueError("Index not built. Call build_index() first.")
         
         # Generate embedding
         embedding = embedder.embed_codebase(submission.code_files)
-        normalized_embedding = embedder.normalize_embedding(embedding)
         
         # Add to index
-        embedding_matrix = normalized_embedding.reshape(1, -1).astype(np.float32)
-        faiss.normalize_L2(embedding_matrix)
+        embedding_matrix = embedding.reshape(1, -1).astype(np.float32)
+        if not embedder.config.normalize_embeddings:
+            faiss.normalize_L2(embedding_matrix)
         self.index.add(embedding_matrix)
         
         # Add to metadata
@@ -476,14 +384,14 @@ class FAISSManager:
         else:
             self.logger.warning(f"No submission found with ID {submission_id}")
     
-    def search_by_code_similarity(self, code_files: Dict[str, str], embedder: HybridCodeEmbedder,
+    def search_by_code_similarity(self, code_files: Dict[str, str], embedder: JavaCodeEmbedder,
                                  assignment_id: Optional[str] = None, top_k: int = 5) -> List[Dict[str, Any]]:
         """
-        Search for similar submissions by code content.
+        Search for similar submissions by Java code content.
         
         Args:
-            code_files: Dictionary of code files to search for
-            embedder: Embedder instance
+            code_files: Dictionary of Java code files to search for
+            embedder: Java embedder instance
             assignment_id: Optional assignment filter
             top_k: Number of results to return
             
@@ -492,6 +400,5 @@ class FAISSManager:
         """
         # Generate embedding for the query code
         query_embedding = embedder.embed_codebase(code_files)
-        normalized_query = embedder.normalize_embedding(query_embedding)
         
-        return self.search_similar(normalized_query, assignment_id, top_k) 
+        return self.search_similar(query_embedding, assignment_id, top_k, embedder=embedder) 

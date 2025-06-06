@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Build Assignment-Specific FAISS Indices Script
 
-This script builds separate FAISS indices for each assignment (ZIP file) to improve
+This script builds separate FAISS indices for each assignment (task folder) to improve
 efficiency and provide better contextual results. Each assignment gets its own
-dedicated FAISS index with enhanced similarity support.
+dedicated FAISS index using Java code embeddings with Ollama StarCoder2.
 
 Usage:
     python src/faiss/build_assignment_indices.py [options]
@@ -20,24 +21,38 @@ from pathlib import Path
 from typing import Dict, Any, List
 from collections import defaultdict
 
+# Load environment variables from config.env
+try:
+    from dotenv import load_dotenv
+    # Load from config.env in the project root
+    config_path = Path(__file__).parent.parent.parent / "config.env"
+    if config_path.exists():
+        load_dotenv(config_path)
+        print(f"[SUCCESS] Loaded configuration from {config_path}")
+    else:
+        print(f"[WARNING] Config file not found at {config_path}")
+except ImportError:
+    print("[WARNING] python-dotenv not installed. Install with: pip install python-dotenv")
+    print("[WARNING] Will use system environment variables only")
+
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.faiss.processor import SubmissionProcessor
-from src.faiss.embedder import HybridCodeEmbedder
+from src.faiss.processor import MultiFolderProcessor, TaskFolderProcessor
+from src.faiss.embedder import create_java_embedder
 from src.faiss.assignment_faiss_manager import AssignmentFAISSManager
 from src.utils.logger import get_logger, setup_logger
 
 
 def parse_arguments():
     """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description="Build assignment-specific FAISS indices")
+    parser = argparse.ArgumentParser(description="Build assignment-specific FAISS indices for Java code using Ollama")
     
     parser.add_argument(
         "--data-dir",
         type=str,
         default="src/faiss/data",
-        help="Directory containing submission ZIP files"
+        help="Directory containing task folders with individual ZIP files"
     )
     
     parser.add_argument(
@@ -50,8 +65,22 @@ def parse_arguments():
     parser.add_argument(
         "--model-name",
         type=str,
-        default="microsoft/codebert-base",
-        help="Code embedding model name"
+        default="starcoder2:3b",
+        help="Ollama model name for Java code embeddings (e.g., starcoder2:3b, qwen2.5-coder:7b)"
+    )
+    
+    parser.add_argument(
+        "--use-ollama",
+        action="store_true",
+        default=True,
+        help="Use Ollama API for embeddings (default: True)"
+    )
+    
+    parser.add_argument(
+        "--ollama-url",
+        type=str,
+        default=None,
+        help="Ollama base URL (loads from OLLAMA_BASE_URL env var if not specified)"
     )
     
     parser.add_argument(
@@ -63,23 +92,10 @@ def parse_arguments():
     )
     
     parser.add_argument(
-        "--device",
-        type=str,
-        default=None,
-        help="Device for embeddings (cuda/cpu, auto if not specified)"
-    )
-    
-    parser.add_argument(
-        "--min-score",
-        type=float,
-        default=None,
-        help="Minimum score to include submissions"
-    )
-    
-    parser.add_argument(
-        "--has-feedback",
-        action="store_true",
-        help="Only include submissions with feedback"
+        "--max-length",
+        type=int,
+        default=8192,
+        help="Maximum sequence length for code tokenization (Ollama supports longer contexts)"
     )
     
     parser.add_argument(
@@ -87,23 +103,7 @@ def parse_arguments():
         type=str,
         nargs="+",
         default=None,
-        help="Specific assignment IDs to process (default: all)"
-    )
-    
-    parser.add_argument(
-        "--enhanced-similarity",
-        action="store_true",
-        default=True,
-        help="Enable enhanced similarity calculation"
-    )
-    
-    parser.add_argument(
-        "--similarity-weights",
-        type=float,
-        nargs=4,
-        default=[0.5, 0.3, 0.15, 0.05],
-        metavar=("SEMANTIC", "STRUCTURAL", "PATTERN", "GRAPH"),
-        help="Weights for similarity components: semantic structural pattern graph"
+        help="Specific assignment IDs to process (default: all found task folders)"
     )
     
     parser.add_argument(
@@ -113,34 +113,6 @@ def parse_arguments():
     )
     
     return parser.parse_args()
-
-
-def find_zip_files(data_dir: str) -> Dict[str, str]:
-    """Find all ZIP files and map them to assignment IDs"""
-    data_path = Path(data_dir)
-    if not data_path.exists():
-        return {}
-    
-    zip_files = list(data_path.glob("*.zip"))
-    assignment_map = {}
-    
-    for zip_file in zip_files:
-        # Extract assignment ID from filename (remove _submissions.zip suffix)
-        assignment_id = zip_file.stem.replace("_submissions", "")
-        assignment_map[assignment_id] = str(zip_file)
-    
-    return assignment_map
-
-
-def group_submissions_by_assignment(all_submissions: List) -> Dict[str, List]:
-    """Group submissions by assignment ID"""
-    submissions_by_assignment = defaultdict(list)
-    
-    for submission in all_submissions:
-        assignment_id = submission.assignment_id
-        submissions_by_assignment[assignment_id].append(submission)
-    
-    return dict(submissions_by_assignment)
 
 
 def validate_requirements():
@@ -158,14 +130,9 @@ def validate_requirements():
         missing_packages.append("numpy")
     
     try:
-        import sklearn
+        import requests
     except ImportError:
-        missing_packages.append("scikit-learn")
-    
-    try:
-        import networkx
-    except ImportError:
-        missing_packages.append("networkx")
+        missing_packages.append("requests")
     
     if missing_packages:
         print(f"Error: Missing required packages: {', '.join(missing_packages)}")
@@ -173,6 +140,35 @@ def validate_requirements():
         return False
     
     return True
+
+
+def test_ollama_connection(ollama_base_url: str, model_name: str) -> bool:
+    """Test connection to Ollama and check if model is available"""
+    try:
+        import requests
+        
+        # Test basic connection
+        response = requests.get(f"{ollama_base_url}/api/tags", timeout=10)
+        if response.status_code != 200:
+            print(f"[ERROR] Cannot connect to Ollama at {ollama_base_url}")
+            return False
+        
+        # Check if model is available
+        models = response.json().get('models', [])
+        model_names = [m['name'] for m in models]
+        
+        if not any(model_name in name for name in model_names):
+            print(f"[WARNING] Model {model_name} not found in Ollama")
+            print(f"Available models: {model_names}")
+            print(f"To pull the model, run: ollama pull {model_name}")
+            return False
+        
+        print(f"[SUCCESS] Ollama connection successful, model {model_name} available")
+        return True
+        
+    except Exception as e:
+        print(f"[ERROR] Error testing Ollama connection: {e}")
+        return False
 
 
 def main():
@@ -184,102 +180,77 @@ def main():
     setup_logger(log_level=log_level)
     logger = get_logger(__name__)
     
-    logger.info("Starting assignment-specific FAISS index build process")
+    logger.info("Starting assignment-specific FAISS index build process for Java code with Ollama")
     logger.info(f"Arguments: {vars(args)}")
     
     # Validate requirements
     if not validate_requirements():
         sys.exit(1)
     
-    # Find all ZIP files and their assignment mappings
-    logger.info(f"Looking for ZIP files in directory: {args.data_dir}")
-    assignment_zip_map = find_zip_files(args.data_dir)
+    # Load Ollama URL from environment if not provided
+    ollama_base_url = args.ollama_url
+    if ollama_base_url is None:
+        ollama_base_url = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
     
-    if not assignment_zip_map:
-        logger.error(f"No ZIP files found in directory: {args.data_dir}")
+    # Test Ollama connection
+    if args.use_ollama:
+        logger.info(f"Testing Ollama connection at {ollama_base_url}")
+        if not test_ollama_connection(ollama_base_url, args.model_name):
+            logger.error("Ollama connection failed. Please check your setup.")
+            sys.exit(1)
+    
+    # Validate data directory
+    if not Path(args.data_dir).exists():
+        logger.error(f"Data directory not found: {args.data_dir}")
         sys.exit(1)
     
-    logger.info(f"Found {len(assignment_zip_map)} assignments: {list(assignment_zip_map.keys())}")
-    
-    # Filter assignments if specified
-    if args.assignments:
-        filtered_map = {aid: path for aid, path in assignment_zip_map.items() 
-                       if aid in args.assignments}
-        if not filtered_map:
-            logger.error(f"None of the specified assignments found: {args.assignments}")
-            sys.exit(1)
-        assignment_zip_map = filtered_map
-        logger.info(f"Processing specified assignments: {list(assignment_zip_map.keys())}")
-    
     try:
-        # Process submissions from each ZIP file
-        all_submissions = []
-        assignment_stats = {}
+        # Process all task folders to extract submissions
+        logger.info(f"Processing task folders in directory: {args.data_dir}")
+        multi_processor = MultiFolderProcessor(args.data_dir)
         
-        for assignment_id, zip_file in assignment_zip_map.items():
-            logger.info(f"Processing submissions from {zip_file} (Assignment: {assignment_id})")
-            processor = SubmissionProcessor(zip_file)
-            submissions = processor.extract_submissions()
-            
-            if not submissions:
-                logger.warning(f"No submissions found in ZIP file: {zip_file}")
-                continue
-            
-            logger.info(f"Extracted {len(submissions)} submissions from {assignment_id}")
-            
-            # Get statistics for this assignment
-            stats = processor.get_submission_statistics()
-            assignment_stats[assignment_id] = {
-                'zip_file': Path(zip_file).name,
-                'extraction_stats': stats,
-                'raw_submission_count': len(submissions)
-            }
-            
-            # Filter submissions if requested
-            if args.min_score is not None or args.has_feedback:
-                logger.info(f"Applying filters to submissions from {assignment_id}")
-                filtered_submissions = processor.filter_submissions(
-                    min_score=args.min_score,
-                    has_feedback=args.has_feedback,
-                    min_files=1
-                )
-                submissions = filtered_submissions
-                logger.info(f"After filtering {assignment_id}: {len(submissions)} submissions")
-                assignment_stats[assignment_id]['filtered_submission_count'] = len(submissions)
-            
-            all_submissions.extend(submissions)
+        # Extract submissions from all task folders
+        submissions_by_assignment = multi_processor.process_all_tasks()
         
-        if not all_submissions:
-            logger.error("No submissions found in any ZIP files after processing")
+        if not submissions_by_assignment:
+            logger.error("No submissions found in any task folders")
             sys.exit(1)
         
-        logger.info(f"Total submissions collected: {len(all_submissions)}")
+        logger.info(f"Found submissions for {len(submissions_by_assignment)} assignments")
         
-        # Group submissions by assignment
-        submissions_by_assignment = group_submissions_by_assignment(all_submissions)
-        logger.info(f"Grouped submissions into {len(submissions_by_assignment)} assignments")
+        # Get statistics
+        overall_stats = multi_processor.get_overall_statistics(submissions_by_assignment)
+        logger.info(f"Total submissions: {overall_stats['total_submissions']}")
         
         for assignment_id, submissions in submissions_by_assignment.items():
             logger.info(f"Assignment '{assignment_id}': {len(submissions)} submissions")
         
-        # Initialize embedder with enhanced similarity
-        logger.info(f"Initializing embedder with model: {args.model_name}")
-        embedder = HybridCodeEmbedder(
+        # Filter assignments if specified
+        if args.assignments:
+            filtered_submissions = {aid: subs for aid, subs in submissions_by_assignment.items() 
+                                  if aid in args.assignments}
+            if not filtered_submissions:
+                logger.error(f"None of the specified assignments found: {args.assignments}")
+                sys.exit(1)
+            submissions_by_assignment = filtered_submissions
+            logger.info(f"Processing specified assignments: {list(submissions_by_assignment.keys())}")
+        
+        # Initialize Java code embedder with Ollama
+        logger.info(f"Initializing Java code embedder with Ollama model: {args.model_name}")
+        embedder = create_java_embedder(
             model_name=args.model_name,
-            device=args.device
+            use_ollama=args.use_ollama,
+            ollama_base_url=ollama_base_url,
+            max_length=args.max_length
         )
         
-        # Configure similarity weights
-        if args.enhanced_similarity:
-            embedder.adjust_similarity_weights(*args.similarity_weights)
-            logger.info(f"Enhanced similarity enabled with weights: {args.similarity_weights}")
+        logger.info(f"Embedder initialized: {embedder.get_embedding_info()}")
         
         # Initialize assignment FAISS manager
         logger.info(f"Initializing Assignment FAISS manager")
         assignment_manager = AssignmentFAISSManager(
             base_index_path=args.output_path,
-            index_type=args.index_type,
-            use_enhanced_similarity=args.enhanced_similarity
+            index_type=args.index_type
         )
         
         # Build assignment-specific indices
@@ -291,29 +262,21 @@ def main():
         
         logger.info("Assignment-specific indices build completed successfully!")
         
-        # Save embedder scalers
-        scaler_path = Path(args.output_path) / "embedder_scalers.pkl"
-        embedder.save_scalers(str(scaler_path))
-        logger.info(f"Saved embedder scalers to {scaler_path}")
-        
         # Save comprehensive metadata
         metadata_path = Path(args.output_path) / "build_metadata.json"
         comprehensive_metadata = {
             'build_args': vars(args),
-            'assignment_stats': assignment_stats,
+            'overall_stats': overall_stats,
             'build_stats': build_stats,
             'embedding_info': embedder.get_embedding_info(),
-            'assignment_zip_mapping': assignment_zip_map,
-            'total_submissions': len(all_submissions),
+            'data_structure': 'task_folders_with_individual_zips',
+            'data_directory': args.data_dir,
+            'total_submissions': overall_stats['total_submissions'],
             'assignments_built': list(build_stats.keys()),
-            'build_type': 'assignment_specific',
-            'enhanced_similarity_enabled': args.enhanced_similarity,
-            'similarity_weights': {
-                'semantic': args.similarity_weights[0],
-                'structural': args.similarity_weights[1], 
-                'pattern': args.similarity_weights[2],
-                'graph': args.similarity_weights[3]
-            }
+            'build_type': 'assignment_specific_java_ollama',
+            'model_name': args.model_name,
+            'ollama_base_url': ollama_base_url,
+            'max_length': args.max_length
         }
         
         with open(metadata_path, 'w') as f:
@@ -321,36 +284,41 @@ def main():
         logger.info(f"Saved comprehensive build metadata to {metadata_path}")
         
         # Final summary
-        print("\n" + "="*70)
-        print("✅ Assignment-Specific FAISS Indices Build Complete!")
-        print(f"📁 Indices saved to: {args.output_path}")
-        print(f"🎯 Assignments processed: {len(build_stats)}")
+        print("\n" + "="*80)
+        print("[SUCCESS] Assignment-Specific Java FAISS Indices Build Complete!")
+        print(f"[MODEL] Using Ollama with {args.model_name}")
+        print(f"[PATH] Indices saved to: {args.output_path}")
+        print(f"[STATS] Assignments processed: {len(build_stats)}")
         
         total_indexed = sum(stats['valid_embeddings'] for stats in build_stats.values())
-        print(f"📊 Total submissions indexed: {total_indexed}")
+        print(f"[TOTAL] Total Java submissions indexed: {total_indexed}")
         
-        print(f"🔧 Enhanced similarity: {'Enabled' if args.enhanced_similarity else 'Disabled'}")
-        if args.enhanced_similarity:
-            print(f"   Weights: Semantic={args.similarity_weights[0]}, Structural={args.similarity_weights[1]}")
-            print(f"           Pattern={args.similarity_weights[2]}, Graph={args.similarity_weights[3]}")
-        
-        print(f"📏 Embedding dimension: {embedder.get_embedding_info()['total_dim']}")
-        print(f"📦 Index type: {args.index_type}")
+        print(f"[MODEL] Model: {args.model_name}")
+        print(f"[URL] Ollama URL: {ollama_base_url}")
+        print(f"[DIM] Embedding dimension: {embedder.get_embedding_info()['embedding_dim']}")
+        print(f"[TYPE] Index type: {args.index_type}")
+        print(f"[LENGTH] Max sequence length: {args.max_length}")
         
         print("\nPer-Assignment Statistics:")
         for assignment_id, stats in build_stats.items():
-            print(f"  • {assignment_id}: {stats['valid_embeddings']} submissions indexed")
+            print(f"  • {assignment_id}: {stats['valid_embeddings']} Java submissions indexed")
         
-        print("="*70)
+        print("="*80)
         
         # Usage examples
-        print("\n📖 Usage Examples:")
+        print("\n[USAGE] Usage Examples:")
         print("  # Search within specific assignment:")
+        print(f"  from src.faiss.assignment_faiss_manager import AssignmentFAISSManager")
+        print(f"  from src.faiss.embedder import create_java_embedder")
         print(f"  manager = AssignmentFAISSManager('{args.output_path}')")
         print("  manager.load_assignment_indices()")
+        print(f"  embedder = create_java_embedder(model_name='{args.model_name}')")
         print("  results = manager.search_similar_in_assignment('assignment_id', query_embedding)")
         print("\n  # Search across multiple assignments:")
         print("  results = manager.search_across_assignments(query_embedding, assignment_ids=['id1', 'id2'])")
+        
+        print(f"\n[EVAL] Quick Start Evaluation:")
+        print(f"  python evaluate_embedder_performance.py --model-name {args.model_name}")
         
     except Exception as e:
         logger.error(f"Failed to build assignment indices: {str(e)}")
