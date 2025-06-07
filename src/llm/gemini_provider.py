@@ -92,7 +92,7 @@ class GeminiProvider(LLMProvider):
             # Configure generation parameters
             generation_config = genai.types.GenerationConfig(
                 temperature=kwargs.get('temperature', 0.1),
-                max_output_tokens=kwargs.get('max_output_tokens', 8192),
+                max_output_tokens=kwargs.get('max_output_tokens', 65536),
                 top_p=kwargs.get('top_p', 0.95),
                 top_k=kwargs.get('top_k', 40)
             )
