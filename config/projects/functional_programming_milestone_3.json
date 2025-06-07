@@ -1,0 +1,21 @@
+{
+  "max_file_size": 1000000,
+  "ignore_patterns": [
+    "*.pyc",
+    "__pycache__",
+    ".git",
+    "*.log",
+    "node_modules",
+    "*.class",
+    "target/",
+    "build/",
+    "dist/",
+    ".gitignore"
+  ],
+  "keep_patterns": [
+  ],
+  "max_parallel_llm": 2,
+  "enable_semgrep_analysis": false,
+  "semgrep_rules_file": "config/semgrep_rules.yaml",
+  "semgrep_timeout": 300
+} 

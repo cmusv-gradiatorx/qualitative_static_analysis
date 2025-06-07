@@ -8,8 +8,9 @@ Author: Auto-generated
 """
 
 import os
+import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
 
@@ -59,15 +60,17 @@ class Settings:
         self.output_folder = Path(os.getenv('OUTPUT_FOLDER', 'output'))
         self.temp_folder = Path(os.getenv('TEMP_FOLDER', 'temp'))
         
-        # Repomix configuration
+        # Repomix configuration (global defaults)
         self.max_tokens = int(os.getenv('MAX_TOKENS', '128000'))
         self.use_compression = os.getenv('USE_COMPRESSION', 'true').lower() == 'true'
         self.remove_comments = os.getenv('REMOVE_COMMENTS', 'false').lower() == 'true'
         
-        # Semgrep configuration
-        self.enable_semgrep_analysis = os.getenv('ENABLE_SEMGREP_ANALYSIS', 'true').lower() == 'true'
-        self.semgrep_rules_file = Path(os.getenv('SEMGREP_RULES_FILE', 'config/semgrep_rules.yaml'))
-        self.semgrep_timeout = int(os.getenv('SEMGREP_TIMEOUT', '300'))
+        # Project assignment configuration (only this comes from main config)
+        self.project_assignment = os.getenv('PROJECT_ASSIGNMENT', 'functional_programming_milestone_3')
+        
+        # Assignment-specific settings are loaded dynamically from project config via get_project_config()
+        # This includes: max_file_size (for file filtering), enable_semgrep_analysis, semgrep_rules_file, 
+        # semgrep_timeout, max_parallel_llm, ignore_patterns, keep_patterns
         
         # Create directories if they don't exist
         self._create_directories()
@@ -118,6 +121,50 @@ class Settings:
         else:
             raise ValueError(f"Unknown LLM provider: {self.llm_provider}")
     
+    def get_project_config(self) -> Dict[str, Any]:
+        """
+        Get project-specific configuration from project config file.
+        
+        Returns:
+            Dictionary containing project-specific settings
+        """
+        project_config_file = Path(f"config/projects/{self.project_assignment}.json")
+        
+        # Default configuration if project config doesn't exist
+        default_config = {
+            "max_file_size": 1000000,  # 1MB default file size limit for filtering (in bytes)
+            "ignore_patterns": ["*.pyc", "__pycache__", ".git", "*.log"],
+            "keep_patterns": ["*.py", "*.md", "*.txt", "*.yaml", "*.yml", "*.json"],
+            "max_parallel_llm": 2,  # Default value
+            "enable_semgrep_analysis": False,  # Default value  
+            "semgrep_rules_file": "config/semgrep_rules.yaml",  # Default value
+            "semgrep_timeout": 300  # Default value
+        }
+        
+        if project_config_file.exists():
+            try:
+                with open(project_config_file, 'r', encoding='utf-8') as f:
+                    project_config = json.load(f)
+                    default_config.update(project_config)
+            except Exception as e:
+                print(f"Warning: Failed to load project config {project_config_file}: {e}")
+                print("Using default configuration")
+        
+        # Validate project-specific settings
+        if default_config.get('max_parallel_llm', 1) < 1:
+            raise ValueError("max_parallel_llm must be at least 1")
+        
+        return default_config
+    
+    def get_prompts_dir(self) -> Path:
+        """
+        Get the prompts directory for the current project assignment.
+        
+        Returns:
+            Path to the project-specific prompts directory
+        """
+        return Path(f"prompts/{self.project_assignment}")
+    
     def __repr__(self) -> str:
         """String representation of settings."""
-        return f"Settings(llm_provider='{self.llm_provider}', max_tokens={self.max_tokens})" 
+        return f"Settings(llm_provider='{self.llm_provider}', max_tokens={self.max_tokens}, project='{self.project_assignment}')" 

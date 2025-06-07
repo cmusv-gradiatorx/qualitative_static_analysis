@@ -3,6 +3,7 @@ Repomix Processor
 
 Handles processing of codebases using repomix with token counting and compression.
 Implements logic to handle token limits and apply compression when needed.
+Supports project-specific ignore patterns, keep patterns, and file size filtering.
 
 Author: Auto-generated
 """
@@ -11,8 +12,10 @@ import subprocess
 import os
 import shutil
 import platform
+import json
+import fnmatch
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 import tempfile
 import zipfile
 
@@ -25,26 +28,43 @@ class RepomixProcessor:
     
     This class handles the extraction of ZIP files, running repomix,
     and managing token limits with compression when necessary.
+    Supports project-specific filtering via ignore patterns, keep patterns, and file size limits.
     """
     
     def __init__(self, max_tokens: int = 128000, use_compression: bool = True, 
-                 remove_comments: bool = False):
+                 remove_comments: bool = False, ignore_patterns: Optional[List[str]] = None,
+                 keep_patterns: Optional[List[str]] = None, max_file_size: Optional[int] = None):
         """
         Initialize the repomix processor.
         
         Args:
-            max_tokens: Maximum token limit for the LLM
+            max_tokens: Maximum token limit for the LLM model (e.g., 128K for GPT-4) - used for compression decisions
             use_compression: Whether to use compression if token limit exceeded
             remove_comments: Whether to remove comments from code
+            ignore_patterns: List of file/directory patterns to ignore
+            keep_patterns: List of file patterns to keep (only these will be included)
+            max_file_size: Maximum file size in bytes for filtering (files larger than this will be ignored before processing)
         """
         self.max_tokens = max_tokens
         self.use_compression = use_compression
         self.remove_comments = remove_comments
+        self.ignore_patterns = ignore_patterns or []
+        self.keep_patterns = keep_patterns or []
+        self.max_file_size = max_file_size
         self.logger = get_logger(__name__)
         self.is_windows = platform.system().lower() == 'windows'
         
         # Check if repomix is available
         self._check_repomix_availability()
+        
+        # Log the configuration
+        self.logger.info(f"RepomixProcessor initialized with:")
+        self.logger.info(f"  - Max tokens (LLM limit): {self.max_tokens}")
+        self.logger.info(f"  - Use compression: {self.use_compression}")
+        self.logger.info(f"  - Remove comments: {self.remove_comments}")
+        self.logger.info(f"  - Max file size (filtering): {self.max_file_size} bytes" if self.max_file_size else "  - Max file size (filtering): unlimited")
+        self.logger.info(f"  - Ignore patterns: {self.ignore_patterns}")
+        self.logger.info(f"  - Keep patterns: {self.keep_patterns}")
     
     def _check_repomix_availability(self) -> None:
         """Check if repomix is available via npx."""
@@ -92,6 +112,152 @@ class RepomixProcessor:
         except Exception as e:
             raise Exception(f"Failed to extract ZIP file {zip_path}: {str(e)}")
     
+    def _should_ignore_file(self, file_path: Path, project_root: Path) -> bool:
+        """
+        Check if a file should be ignored based on configured patterns and file size.
+        
+        Args:
+            file_path: Path to the file to check
+            project_root: Root directory of the project
+            
+        Returns:
+            True if the file should be ignored, False otherwise
+        """
+        try:
+            # Get relative path for pattern matching
+            relative_path = file_path.relative_to(project_root)
+            relative_path_str = str(relative_path)
+            
+            # Check file size if max_file_size is set
+            if self.max_file_size and file_path.is_file():
+                try:
+                    if file_path.stat().st_size > self.max_file_size:
+                        self.logger.debug(f"Ignoring large file: {relative_path_str} ({file_path.stat().st_size} bytes > {self.max_file_size} bytes)")
+                        return True
+                except OSError:
+                    # If we can't stat the file, err on the side of caution and include it
+                    pass
+            
+            # Check ignore patterns
+            for pattern in self.ignore_patterns:
+                if fnmatch.fnmatch(relative_path_str, pattern) or fnmatch.fnmatch(file_path.name, pattern):
+                    self.logger.debug(f"Ignoring file due to ignore pattern '{pattern}': {relative_path_str}")
+                    return True
+                # Also check if any parent directory matches the pattern
+                for parent in relative_path.parents:
+                    if fnmatch.fnmatch(str(parent), pattern) or fnmatch.fnmatch(parent.name, pattern):
+                        self.logger.debug(f"Ignoring file due to parent directory matching ignore pattern '{pattern}': {relative_path_str}")
+                        return True
+            
+            # If keep patterns are specified, file must match at least one keep pattern
+            if self.keep_patterns:
+                for pattern in self.keep_patterns:
+                    if fnmatch.fnmatch(relative_path_str, pattern) or fnmatch.fnmatch(file_path.name, pattern):
+                        self.logger.debug(f"Keeping file due to keep pattern '{pattern}': {relative_path_str}")
+                        return False
+                # No keep pattern matched, so ignore the file
+                self.logger.debug(f"Ignoring file as it doesn't match any keep pattern: {relative_path_str}")
+                return True
+            
+            # File should be included
+            return False
+            
+        except Exception as e:
+            self.logger.warning(f"Error checking file {file_path}: {str(e)}. Including file.")
+            return False
+
+    def _create_repomix_config(self, project_dir: Path) -> Path:
+        """
+        Create a repomix configuration file for the project with custom ignore patterns.
+        
+        Args:
+            project_dir: Path to the project directory
+            
+        Returns:
+            Path to the created configuration file
+        """
+        config_file = project_dir / "repomix.config.json"
+        
+        # Create base configuration
+        config = {
+            "output": {
+                "style": "plain",
+                "removeComments": self.remove_comments,
+                "removeEmptyLines": False,
+                "showLineNumbers": False
+            },
+            "ignore": {
+                "useGitignore": True,
+                "useDefaultPatterns": True,
+                "customPatterns": []
+            }
+        }
+        
+        # Add custom ignore patterns from project configuration
+        if self.ignore_patterns:
+            config["ignore"]["customPatterns"].extend(self.ignore_patterns)
+        
+        # If keep patterns are specified, we need to handle this differently
+        # Since repomix doesn't have a direct "keep only" feature, we'll create include patterns
+        if self.keep_patterns:
+            config["include"] = self.keep_patterns
+        
+        # Write configuration file
+        try:
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+            self.logger.debug(f"Created repomix config file: {config_file}")
+            return config_file
+        except Exception as e:
+            self.logger.warning(f"Failed to create repomix config file: {str(e)}. Using default configuration.")
+            return None
+
+    def _filter_project_files(self, project_dir: Path) -> int:
+        """
+        Filter project files based on configured patterns and file size limits.
+        This is a fallback method for cases where repomix configuration isn't sufficient.
+        
+        Args:
+            project_dir: Path to the project directory
+            
+        Returns:
+            Number of files removed
+        """
+        removed_count = 0
+        
+        if not (self.ignore_patterns or self.keep_patterns or self.max_file_size):
+            return removed_count
+        
+        try:
+            # Walk through all files in the project
+            for file_path in project_dir.rglob("*"):
+                if file_path.is_file() and self._should_ignore_file(file_path, project_dir):
+                    try:
+                        file_path.unlink()
+                        removed_count += 1
+                        self.logger.debug(f"Removed file: {file_path.relative_to(project_dir)}")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to remove file {file_path}: {str(e)}")
+            
+            # Remove empty directories
+            for dir_path in sorted(project_dir.rglob("*"), key=lambda p: len(str(p)), reverse=True):
+                if dir_path.is_dir() and dir_path != project_dir:
+                    try:
+                        if not any(dir_path.iterdir()):  # Directory is empty
+                            dir_path.rmdir()
+                            self.logger.debug(f"Removed empty directory: {dir_path.relative_to(project_dir)}")
+                    except Exception as e:
+                        # Directory might not be empty or might have permission issues
+                        pass
+                        
+        except Exception as e:
+            self.logger.warning(f"Error during file filtering: {str(e)}")
+        
+        if removed_count > 0:
+            self.logger.info(f"Filtered out {removed_count} files based on project configuration")
+            
+        return removed_count
+
     def _run_repomix(self, project_dir: Path, output_file: Path, 
                      style: str = "plain", compressed: bool = False) -> Dict[str, Any]:
         """
@@ -110,14 +276,23 @@ class RepomixProcessor:
             Exception: If repomix execution fails
         """
         try:
+            # Apply custom file filtering if needed
+            filtered_count = self._filter_project_files(project_dir)
+            
+            # Create repomix configuration file
+            config_file = self._create_repomix_config(project_dir)
+            
             # Build repomix command
             cmd = ['npx', 'repomix', str(project_dir)]
             cmd.extend(['--output', str(output_file)])
             cmd.extend(['--style', style])
             
+            # Use configuration file if created
+            if config_file and config_file.exists():
+                cmd.extend(['--config', str(config_file)])
+            
             # Add compression options
             if compressed:
-                cmd.append('--compress')
                 cmd.append('--remove-empty-lines')
             
             if self.remove_comments:
@@ -165,11 +340,19 @@ class RepomixProcessor:
             stdout_text = result.stdout if result.stdout else ""
             token_count = self._extract_token_count(stdout_text, content)
             
+            # Clean up configuration file
+            if config_file and config_file.exists():
+                try:
+                    config_file.unlink()
+                except Exception as e:
+                    self.logger.debug(f"Failed to remove config file {config_file}: {str(e)}")
+            
             return {
                 'content': content,
                 'token_count': token_count,
                 'compressed': compressed,
-                'output_file': output_file
+                'output_file': output_file,
+                'filtered_files_count': filtered_count
             }
             
         except subprocess.TimeoutExpired:
@@ -209,10 +392,11 @@ class RepomixProcessor:
         
         This method handles the complete workflow:
         1. Extract ZIP file
-        2. Run repomix
-        3. Check token count
-        4. Apply compression if needed
-        5. Return processed content
+        2. Apply project-specific filtering (ignore patterns, keep patterns, file size limits)
+        3. Run repomix
+        4. Check token count
+        5. Apply compression if needed
+        6. Return processed content
         
         Args:
             zip_path: Path to the ZIP file containing the codebase
@@ -240,6 +424,8 @@ class RepomixProcessor:
             result = self._run_repomix(project_dir, output_file, style="plain", compressed=False)
             
             self.logger.info(f"Initial token count: {result['token_count']}")
+            if result.get('filtered_files_count', 0) > 0:
+                self.logger.info(f"Filtered {result['filtered_files_count']} files based on project configuration")
             
             # Check if we need compression
             if result['token_count'] > self.max_tokens and self.use_compression:
@@ -269,7 +455,8 @@ class RepomixProcessor:
                 'token_count': result['token_count'],
                 'compressed': result['compressed'],
                 'within_limit': result['token_count'] <= self.max_tokens,
-                'project_name': project_dir.name
+                'project_name': project_dir.name,
+                'filtered_files_count': result.get('filtered_files_count', 0)
             }
             
         except Exception as e:

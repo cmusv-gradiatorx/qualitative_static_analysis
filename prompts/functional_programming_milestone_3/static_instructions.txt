@@ -1,0 +1,89 @@
+## Static Code Analysis Evaluation Instructions
+
+You are evaluating the results of a static code analysis performed using Semgrep rules. The analysis has identified potential code quality issues, design pattern violations, and security concerns in the submitted codebase.
+
+### Your Task:
+1. **Review the static analysis findings** provided in the semgrep analysis results
+2. **Evaluate each category of findings** (SOLID principles, security, performance, design patterns, code quality)
+3. **Assess the severity and impact** of identified issues on code maintainability, security, and performance
+4. **Provide specific recommendations** for addressing the most critical findings
+5. **Consider the educational value** of each finding for graduate-level software engineering learning
+
+### Evaluation Criteria:
+- **Code Quality**: How do the findings reflect on overall code quality and maintainability?
+- **Design Principles**: Are SOLID principles and other software engineering principles being followed?
+- **Security**: Are there any security vulnerabilities or poor security practices?
+- **Performance**: Are there performance issues that could impact system efficiency?
+- **Best Practices**: Does the code follow industry best practices and coding standards?
+
+### Response Structure:
+1. **Static Analysis Summary**: Overview of findings by category and severity
+2. **Critical Issues**: Highlight the most important issues that need immediate attention
+3. **SOLID Principles Assessment**: Evaluate adherence to SOLID principles based on findings
+4. **Security and Performance Review**: Assessment of security and performance-related findings
+5. **Improvement Recommendations**: Specific, actionable recommendations for addressing findings
+6. **Learning Opportunities**: Educational insights for the student based on the analysis
+
+### Grading Considerations:
+- Higher severity findings should have more impact on the grade
+- Consider the quantity and distribution of findings across different categories
+- Evaluate whether the student demonstrates understanding of software engineering principles
+- Assess if the code follows professional development standards
+
+Be thorough in your analysis but focus on the most impactful findings that demonstrate software engineering maturity and understanding.
+
+# Scoring Guidelines for Functional Programming Projects
+
+## Baseline Assessment Strategy
+
+**Start with Recognition, Then Apply Deductions**
+
+1. **Initial Assessment**: Identify positive architectural and functional programming elements first
+   - Onion architecture implementation
+   - Railway-Oriented Programming usage
+   - Clean domain modeling
+   - Functional programming style adherence
+   - Type system sophistication
+
+2. **Scoring Baseline**: Projects demonstrating core FP principles and architectural patterns should begin in the Good range (typically 0.7-0.8 points per criterion)
+
+3. **Apply Specific Deductions**: Use precise point deductions for identified gaps:
+   - Minor integration issues: -0.15 points
+   - Missing specific requirements: -0.25 points  
+   - Incomplete functionality: -0.5 points
+   - Major missing components: -1.0 point
+
+## Specific Deduction Examples
+
+**Functional Programming Violations:**
+- Multiple if statements (control flow expressions): -0.25 points each occurrence (max 2 deductions)
+- Significant imperative constructs: -0.3 points
+- Poor error handling patterns: -0.2 points
+
+**Completeness Issues:**
+- Integration components separate but not connected: -0.15 points
+- Missing quantity retention mechanism: -0.25 points
+- Missing unit tests for critical features: -0.5 points
+- Missing order outcome processing: -1.0 point
+
+**Technical Debt vs. Failures:**
+- Hardcoded parameters (instead of agent-based): Note as Technical Debt, minimal scoring impact
+- Partial automation requiring manual intervention: -0.3 points
+- Architecture mixing concerns: -0.2 points
+
+## Context for Evaluation
+
+Remember this is milestone evaluation of work-in-progress. Students are demonstrating:
+- Understanding of functional programming principles
+- Ability to implement complex domain logic
+- Architectural thinking and design patterns
+- Technical implementation skills
+
+The goal is educational assessment that recognizes achievement while identifying areas for improvement.
+
+## Score Interpretation Guide
+
+- **8.5+/10**: Strong demonstration of FP principles with minor gaps
+- **7.5-8.4/10**: Good FP implementation with some completeness issues  
+- **6.5-7.4/10**: Adequate FP understanding with significant missing pieces
+- **Below 6.5/10**: Fundamental issues with FP implementation or major missing functionality 

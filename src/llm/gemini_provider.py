@@ -27,6 +27,7 @@ class GeminiProvider(LLMProvider):
         'gemini-1.5-pro': 2097152,
         'gemini-1.5-flash': 1048576,
         'gemini-pro': 32768,
+        'gemini-2.5-flash-preview-05-20': 831072,
     }
     
     def __init__(self, config: Dict[str, Any]):
@@ -41,6 +42,26 @@ class GeminiProvider(LLMProvider):
         
         # Initialize tokenizer for token counting (approximate)
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        
+        # Configure safety settings
+        self.safety_settings = [
+            {
+                "category": "HARM_CATEGORY_HARASSMENT",
+                "threshold": "BLOCK_ONLY_HIGH"
+            },
+            {
+                "category": "HARM_CATEGORY_HATE_SPEECH",
+                "threshold": "BLOCK_ONLY_HIGH"
+            },
+            {
+                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "threshold": "BLOCK_ONLY_HIGH"
+            },
+            {
+                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "threshold": "BLOCK_ONLY_HIGH"
+            }
+        ]
     
     def _validate_config(self) -> None:
         """Validate Gemini-specific configuration."""
@@ -71,7 +92,7 @@ class GeminiProvider(LLMProvider):
             # Configure generation parameters
             generation_config = genai.types.GenerationConfig(
                 temperature=kwargs.get('temperature', 0.1),
-                max_output_tokens=kwargs.get('max_output_tokens', 8192),
+                max_output_tokens=kwargs.get('max_output_tokens', 65536),
                 top_p=kwargs.get('top_p', 0.95),
                 top_k=kwargs.get('top_k', 40)
             )
@@ -79,7 +100,8 @@ class GeminiProvider(LLMProvider):
             # Generate response
             response = self.client.generate_content(
                 prompt,
-                generation_config=generation_config
+                generation_config=generation_config,
+                safety_settings=self.safety_settings
             )
             
             if not response.text:

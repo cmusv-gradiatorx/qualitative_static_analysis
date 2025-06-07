@@ -2,12 +2,22 @@
 
 An autograder for graduate-level software engineering assignments that uses Large Language Models (LLMs) for qualitative code analysis. The system processes entire codebases using repomix and provides comprehensive feedback based on customizable rubrics.
 
+## 🆕 Version 2.0 - Enhanced Features
+
+- **Parallel LLM Processing**: Process multiple rubric criteria simultaneously for faster evaluation
+- **Structured Rubric System**: JSON-based rubric definitions with detailed scoring criteria
+- **Project-Specific Configurations**: Dynamic configuration based on assignment type
+- **Enhanced Output Format**: Structured evaluation reports with detailed feedback
+- **Raw Semgrep Output**: Separate files for detailed static analysis findings
+
 ## Features
 
 - **Multi-LLM Support**: Supports Gemini, OpenAI GPT, and Ollama (Llama) models with plug-and-play architecture
 - **Token Management**: Automatic token counting and compression using repomix
-- **Customizable Rubrics**: Flexible prompt system for different assignment requirements
+- **Customizable Rubrics**: Flexible JSON-based rubric system for different assignment requirements
 - **Static Code Analysis**: Configurable Semgrep-based static analysis for code quality assessment
+- **Parallel Processing**: Configurable parallel LLM evaluation for detailed rubric assessment
+- **Project Management**: Dynamic configuration system for different courses and assignments
 
 ## Architecture
 
@@ -61,7 +71,6 @@ The system follows software engineering best practices with modular design:
 
    # Ollama Configuration (for local Llama models)
    OLLAMA_BASE_URL=http://localhost:11434
-   #OLLAMA_MODEL=llama3.1
    OLLAMA_MODEL=deepseek-r1
 
    # Application Configuration
@@ -78,6 +87,12 @@ The system follows software engineering best practices with modular design:
    ENABLE_SEMGREP_ANALYSIS=false
    SEMGREP_RULES_FILE=config/semgrep_rules.yaml
    SEMGREP_TIMEOUT=300 
+
+   # Parallel Processing Configuration
+   MAX_PARALLEL_LLM=2
+
+   # Project Assignment Configuration
+   PROJECT_ASSIGNMENT=functional_programming_milestone_3
    ```
 
 ## Usage
@@ -96,15 +111,66 @@ The system follows software engineering best practices with modular design:
 3. **Check results** in the `output/` directory
    - Each assignment gets a detailed evaluation report
    - Reports include grades, feedback, and improvement suggestions
+   - Separate files for raw static analysis findings
+
+### Project-Specific Configuration
+
+The system supports dynamic configuration for different assignments and courses:
+
+1. **Create project configuration** in `config/projects/[project_name].json`:
+   ```json
+   {
+     "max_file_size": 128000,
+     "ignore_patterns": ["*.pyc", "__pycache__", ".git"],
+     "keep_patterns": ["*.py", "*.md", "*.txt"],
+     "max_parallel_llm": 3,
+     "semgrep_rules_file": "config/semgrep_rules.yaml",
+     "semgrep_timeout": 300
+   }
+   ```
+
+2. **Create project prompts** in `prompts/[project_name]/`:
+   - `assignment_details.txt`: Assignment specifications
+   - `instruction_content.txt`: Evaluation instructions
+   - `general_rubric.txt`: Common rubric instructions
+   - `specific_rubric.json`: Detailed rubric criteria
+   - `static_instructions.txt`: Static analysis instructions
+
+3. **Set project in configuration**:
+   ```env
+   PROJECT_ASSIGNMENT=your_project_name
+   ```
 
 ### Customizing Evaluation Criteria
 
-The system creates default prompt templates that you can customize:
+#### Structured Rubric System
 
-- **`prompts/rubric_content.txt`**: Define your grading rubric
-- **`prompts/instruction_content.txt`**: Specify evaluation instructions
-- **`prompts/static_instructions.txt`**: Define static analysis evaluation criteria
-- **`config/semgrep_rules.yaml`**: Configure Semgrep rules for static analysis
+Create a `specific_rubric.json` file with detailed criteria:
+
+```json
+[
+  {
+    "criterion_name": "Code Quality",
+    "max_points": 2.0,
+    "specific_prompt": "Evaluate code quality including readability, maintainability, and adherence to best practices.\n\n**Assessment Guidelines:**\n- **Excellent (1.8-2.0 points)**: Clean, well-structured code with excellent practices\n- **Good (1.4-1.7 points)**: Good code quality with minor issues\n- **Satisfactory (1.0-1.3 points)**: Adequate code with some quality issues\n- **Poor (0.0-0.9 points)**: Poor code quality with significant issues"
+  }
+]
+```
+
+#### Parallel Processing Configuration
+
+Configure how many LLM instances run simultaneously:
+
+```env
+MAX_PARALLEL_LLM=3  # Global default
+```
+
+Or in project configuration:
+```json
+{
+  "max_parallel_llm": 4  // Project-specific override
+}
+```
 
 ## LLM Provider Configuration
 
@@ -141,7 +207,7 @@ Set `ENABLE_SEMGREP_ANALYSIS=true` in your configuration to enable static analys
 Edit `config/semgrep_rules.yaml` to define custom rules for your assignments
 
 ### Static Analysis Instructions
-Customize `prompts/static_instructions.txt` to define how the LLM should evaluate static analysis findings.
+Customize `prompts/[project]/static_instructions.txt` to define how the LLM should evaluate static analysis findings.
 
 ## Project Structure
 
@@ -172,11 +238,43 @@ autograder/
 ├── input/                     # Place ZIP files here
 ├── output/                    # Evaluation reports appear here
 ├── config/                    # Configuration files
+│   ├── projects/              # Project-specific configurations
+│   │   └── [project_name].json
 │   └── semgrep_rules.yaml    # Semgrep rules for static analysis
-├── prompts/                   # Customizable prompt templates
+├── prompts/                   # Project-specific prompt templates
+│   └── [project_name]/        # Project-specific prompts
+│       ├── assignment_details.txt
+│       ├── instruction_content.txt
+│       ├── general_rubric.txt
+│       ├── specific_rubric.json
+│       └── static_instructions.txt
 ├── temp/                      # Temporary processing files
 └── logs/                      # Application logs
 ```
+
+## Enhanced Output Format
+
+The system now generates structured evaluation reports:
+
+### Main Evaluation Report
+- Comprehensive rubric-based evaluation
+- Parallel processing statistics
+- Structured feedback for each criterion
+- Static analysis evaluation (if enabled)
+
+### Raw Semgrep Output
+- Detailed static analysis findings
+- Separate file for technical review
+- Timestamped analysis results
+
+## Parallel Processing
+
+The system divides rubric criteria into groups for parallel evaluation:
+
+1. **Automatic Division**: Rubrics are automatically divided based on `max_parallel_llm` setting
+2. **Load Balancing**: Groups are balanced to optimize processing time
+3. **Error Handling**: Failed groups are handled gracefully with error reporting
+4. **Structured Output**: Results are combined into a comprehensive report
 
 ## Token Management
 
@@ -207,6 +305,10 @@ The system intelligently handles token limits:
    - Ensure ZIP files contain valid project structures
    - Check file permissions
 
+5. **Missing prompt files**
+   - Ensure all required files exist in the project prompts directory
+   - Check the error message for specific missing files
+
 ### Logging
 
 - Application logs are saved to `logs/autograder.log`
@@ -217,6 +319,21 @@ The system intelligently handles token limits:
 The system is designed for easy extension:
 
 1. **Add new LLM providers**: Inherit from `LLMProvider` and register with `LLMFactory`
-2. **Custom prompt templates**: Inherit from `PromptTemplate`
+2. **Custom prompt templates**: Create new project-specific prompt directories
 3. **New processing steps**: Extend the `AutoGrader` class
 4. **Custom analyzers**: Add new modules following the existing patterns
+5. **Project configurations**: Add new JSON configuration files for different assignments
+
+## Testing
+
+Run the test script to verify new features:
+
+```bash
+python test_new_features.py
+```
+
+This will test:
+- Settings and project configuration loading
+- Prompt manager functionality
+- Rubric division for parallel processing
+- Content file validation
