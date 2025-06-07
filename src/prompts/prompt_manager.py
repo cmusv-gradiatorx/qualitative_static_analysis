@@ -281,6 +281,8 @@ You must respond with a valid JSON object containing evaluations for each criter
 5. Use exact criterion names as provided in the rubric
 
 Evaluate ONLY the criteria specified above and provide your assessment in the exact JSON format requested.
+
+IMPORTANT NOTE: As mentioned before, the analysis(feedback_positive, feedback_negative, score_justification) should be thorough and detailed. While giving the feedback make sure to provide all (ideally all) instances(like the exact code artifacts: class, variables, functions, tests, etc.) you can on which you are giving the feedback.
 """
     
     def create_static_analysis_prompt(self, semgrep_results: Dict[str, Any]) -> str:

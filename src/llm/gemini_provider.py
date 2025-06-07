@@ -27,6 +27,7 @@ class GeminiProvider(LLMProvider):
         'gemini-1.5-pro': 2097152,
         'gemini-1.5-flash': 1048576,
         'gemini-pro': 32768,
+        'gemini-2.5-flash-preview-05-20': 831072,
     }
     
     def __init__(self, config: Dict[str, Any]):
