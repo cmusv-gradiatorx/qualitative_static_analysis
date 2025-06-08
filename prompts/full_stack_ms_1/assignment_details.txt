@@ -1,0 +1,29 @@
+Goals
+Apply HTML, CSS, and page layout skills to the class project. 
+
+Tasks
+Draft four web pages --- index.html, friends.html, chat.html, and auth.html --- for YACA using HTML, CSS, and the flexbox model based on the wireframes provided: use the trials/ui-eg folder in your project repo for your experiments. 
+Reference wireframes Download Reference wireframes.
+Requirements
+Each page consists of an HTML file with CSS rules specific to that page. These rules are included in the common header section of the HTML file or can be inlined.
+Don't repeat yourself. CSS rules common to all pages should be in a shared styles.css file, which is loaded into all pages.  The styles.css file should define selectors and rules to be reused--and if necessary further specialized--in multiple pages
+All pages must use flexbox containers. Nest column and row flexboxes to achieve the desired result.  
+Pay attention to consistency: All pages should have the same look-and-feel!
+The pages must be responsive: they should look fine on a mobile phone and on a desktop/laptop screen, and respond well to window re-sizing. See note below for more information. 
+For friends.html and chat.html, populate the HTML with fake hardcoded data to make sure you get the right look-and-feel when there are a list of friend elements and chat message elements loaded into these files. 
+Each page must have all the required elements shown in the corresponding wireframe. Required elements are:
+All the UI widgets that you see on the wireframe: buttons, input fields, text, scrollbars, shaded areas or outside borders that imply a surrounding container, etc. For the main widgets, the starter code includes an HTML page template for each page in the clients/pages subfolder, where you will find placeholders for the corresponding HTML elements of that page. Check these templates first because the placeholders also show the mandatory attributes of each HTML element (such as an id attribute). 
+The placement of the widgets should be similar to the wireframe. This determines the general layout and look-and-feel. Minor deviations are ok, but do not change this in any major way. 
+Additional constraints that must satisfied for each page: these are indicated at the bottom of the corresponding wireframe document. Pay attention to them: some pages have a fixed height, others may have a variable height that grows vertically with dynamic content. (Ignore the scroll behavior for now. You will address the scroll behavior later.) 
+Otherwise, you are free to be creative, and experiment with the font sets, color scheme, backgrounds, button styles, use of icons, different border styles, slight deviations in the placement of the widgets, etc. Or just keep it simple! Your choice. 
+Test the pages by rendering them directly on your default browser (should be Chrome). To do so, if you are using VS Code on your laptop, then you can simply use the right-click > "View in Browser" command. If you are using a codespace, install the Live Server extension on the codespace (if not already installed) and open a page using this extension (right-click on page > "Open in Live Server"). This will give start a simple web server to serve static pages and display the directory structure of your repo on your default browser: navigate to the folder in which the pages are located, and click on the page you want to render. See that you can navigate back and forth among the pages by clicking on the buttons. 
+
+Submission Instructions
+Place the HTML and CSS files for your pages in the trials/ui-eg subfolder of your project repo -- these are just the drafts of your final pages, so do not yet put them in their ultimate resting place, the client subfolder. Before you submit your work, these files should be in the trials/ui-eg folder: index.html, friends.html, chat.html, auth.html, styles.css. 
+Always merge your work on any feature branches you used to the main branch before submitting your work.
+Grading branch: gr-ms1
+Your work for this component should be accessible through the grading branch.  
+Push the grading branch to the remote.  
+Do not ever delete the grading branch. If we cannot find it, we will assume that the work is not submitted. 
+Deliverable
+Submit the URL of the grading branch below. We will grade the grading branch only after you submit the URL.
