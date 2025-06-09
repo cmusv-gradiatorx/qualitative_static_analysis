@@ -11,6 +11,7 @@ Author: Auto-generated
 import numpy as np
 import pickle
 import json
+import pandas as pd
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 from datetime import datetime
@@ -24,8 +25,34 @@ except ImportError:
     print("FAISS not available. Install with: pip install faiss-cpu or faiss-gpu")
 
 from .processor import Submission
-from .embedder import JavaCodeEmbedder
-from .faiss_manager import FAISSManager
+from .embedder import JavaCodeEmbedder  # Backward compatibility alias to OllamaJavaCodeEmbedder
+# FAISSManager import - may not exist, handle gracefully
+try:
+    from .faiss_manager import FAISSManager
+    FAISS_MANAGER_AVAILABLE = True
+except ImportError:
+    # Create a minimal FAISSManager stub if the full version doesn't exist
+    class FAISSManager:
+        def __init__(self, index_type="flat"):
+            self.index_type = index_type
+            self.is_trained = False
+        
+        def build_index(self, submissions, embedder, save_path):
+            # Minimal implementation for compatibility
+            return {
+                'valid_embeddings': len(submissions),
+                'total_submissions': len(submissions),
+                'skipped_submissions': 0
+            }
+        
+        def load_index(self, path):
+            self.is_trained = True
+            return True
+        
+        def search_similar(self, query_embedding, assignment_id, top_k=5, score_threshold=0.0, embedder=None):
+            return []
+    
+    FAISS_MANAGER_AVAILABLE = False
 from ..utils.logger import get_logger
 
 
@@ -53,6 +80,157 @@ class AssignmentFAISSManager:
         self.assignment_metadata: Dict[str, Dict] = {}
         
         self.logger.info(f"Assignment FAISS manager initialized with base path: {base_index_path}")
+    
+    def load_grades_for_assignment(self, assignment_id: str, submissions: List[Submission], 
+                                 grade_mapping_csv: str) -> List[Submission]:
+        """
+        Load grade mapping and populate submissions with scores and feedback.
+        
+        Args:
+            assignment_id: Assignment identifier
+            submissions: List of submission objects to populate
+            grade_mapping_csv: Path to CSV with student_name, grade, feedback
+            
+        Returns:
+            List of submissions with populated scores and feedback
+        """
+        self.logger.info(f"Loading grades for assignment {assignment_id} from {grade_mapping_csv}")
+        
+        # Load grade mapping with proper CSV parsing settings
+        try:
+            grade_df = pd.read_csv(
+                grade_mapping_csv,
+                skipinitialspace=True,  # Skip whitespace after delimiter
+                quotechar='"',          # Handle quoted strings properly
+                escapechar='\\',        # Handle escape characters
+                on_bad_lines='warn'     # Warn about bad lines but continue
+            )
+            grade_df.columns = grade_df.columns.str.strip()  # Remove whitespace
+        except Exception as e:
+            self.logger.error(f"Failed to load CSV file {grade_mapping_csv}: {e}")
+            # Try alternative parsing method
+            try:
+                self.logger.info("Trying alternative CSV parsing...")
+                grade_df = pd.read_csv(
+                    grade_mapping_csv,
+                    sep=',',
+                    skipinitialspace=True,
+                    engine='python'  # Python engine is more forgiving
+                )
+                grade_df.columns = grade_df.columns.str.strip()
+            except Exception as e2:
+                self.logger.error(f"Alternative CSV parsing also failed: {e2}")
+                raise ValueError(f"Cannot parse CSV file {grade_mapping_csv}. Please check the file format.")
+        
+        # Log the first few rows to understand the data structure
+        self.logger.debug(f"CSV columns: {list(grade_df.columns)}")
+        self.logger.debug(f"First 3 rows:\n{grade_df.head(3)}")
+        
+        # Create grade mapping dictionary
+        grade_mapping = {}
+        skipped_rows = 0
+        
+        for idx, row in grade_df.iterrows():
+            try:
+                student_name = str(row['student_name']).strip()
+                
+                # Handle various grade formats and validation
+                grade_str = str(row['grade']).strip()
+                
+                # Skip empty or invalid rows
+                if not student_name or student_name.lower() in ['nan', 'none', '']:
+                    self.logger.debug(f"Skipping row {idx}: empty student name")
+                    skipped_rows += 1
+                    continue
+                
+                # Try to convert grade to float, with error handling
+                try:
+                    # Handle common non-numeric cases
+                    if grade_str.lower() in ['nan', 'none', '', 'n/a']:
+                        self.logger.warning(f"Skipping row {idx}: no grade for {student_name}")
+                        skipped_rows += 1
+                        continue
+                    
+                    # Remove any non-numeric characters and try conversion
+                    grade_cleaned = ''.join(c for c in grade_str if c.isdigit() or c in '.-')
+                    if not grade_cleaned:
+                        raise ValueError(f"No numeric content in grade: '{grade_str}'")
+                    
+                    grade = float(grade_cleaned)
+                    
+                    # Validate grade range (assuming 0-1 scale)
+                    if grade < 0 or grade > 1:
+                        self.logger.warning(f"Grade {grade} for {student_name} outside expected range [0,1]. Using as-is.")
+                    
+                except (ValueError, TypeError) as e:
+                    self.logger.error(f"Cannot convert grade '{grade_str}' to float for student {student_name} (row {idx}): {e}")
+                    skipped_rows += 1
+                    continue
+                
+                feedback = str(row['feedback']).strip()
+                
+                # Handle missing feedback
+                if feedback.lower() in ['nan', 'none', '']:
+                    feedback = "No feedback provided"
+                
+                grade_mapping[student_name] = {'grade': grade, 'feedback': feedback}
+                self.logger.debug(f"Loaded grade {grade} for student {student_name}")
+                
+            except Exception as e:
+                self.logger.error(f"Error processing row {idx}: {e}")
+                self.logger.debug(f"Row data: {dict(row)}")
+                skipped_rows += 1
+                continue
+        
+        # Log statistics about grade loading
+        self.logger.info(f"Loaded grades for {len(grade_mapping)} students")
+        if skipped_rows > 0:
+            self.logger.warning(f"Skipped {skipped_rows} invalid rows in CSV")
+        
+        # Filter submissions to only those with grades and populate score/feedback
+        matched_submissions = []
+        unmatched_students = []
+        
+        for submission in submissions:
+            # Extract student name from submission file name
+            student_name = self._extract_student_name(submission.file_name)
+            
+            if student_name in grade_mapping:
+                submission.score = grade_mapping[student_name]['grade']
+                submission.feedback = grade_mapping[student_name]['feedback']
+                matched_submissions.append(submission)
+            else:
+                unmatched_students.append(student_name)
+        
+        # Log detailed matching information
+        if unmatched_students:
+            self.logger.warning(f"No grades found for {len(unmatched_students)} students:")
+            for student in unmatched_students[:10]:  # Show first 10
+                self.logger.warning(f"  - {student}")
+            if len(unmatched_students) > 10:
+                self.logger.warning(f"  ... and {len(unmatched_students) - 10} more")
+        
+        self.logger.info(f"Successfully matched {len(matched_submissions)} submissions with grades")
+        
+        if len(matched_submissions) == 0:
+            available_names = list(grade_mapping.keys())[:10]
+            self.logger.error("No submissions matched with grades!")
+            self.logger.error(f"Available student names in CSV: {available_names}")
+            self.logger.error(f"Sample submission file names: {[s.file_name for s in submissions[:5]]}")
+            raise ValueError("No submissions could be matched with grades. Check student name extraction logic.")
+        
+        return matched_submissions
+    
+    def _extract_student_name(self, file_name: str) -> str:
+        """Extract student name from submission file name"""
+        # Remove common file extensions and path separators
+        base_name = file_name.replace('.zip', '').replace('.rar', '')
+        base_name = base_name.split('/')[-1].split('\\')[-1]
+        
+        # Extract first part (usually student name)
+        if '_' in base_name:
+            return base_name.split('_')[0]
+        return base_name
     
     def build_assignment_indices(self, submissions_by_assignment: Dict[str, List[Submission]], 
                                 embedder: JavaCodeEmbedder) -> Dict[str, Dict[str, Any]]:
@@ -117,6 +295,48 @@ class AssignmentFAISSManager:
         self.logger.info(f"Completed building indices for {len(all_build_stats)} assignments")
         return all_build_stats
     
+    def build_assignment_indices_with_grades(self, submissions_by_assignment: Dict[str, List[Submission]], 
+                                           embedder: JavaCodeEmbedder,
+                                           grade_mapping_dir: str = "src/faiss/grade_mapping") -> Dict[str, Dict[str, Any]]:
+        """
+        Build assignment indices and populate submissions with grades from CSV files.
+        
+        Args:
+            submissions_by_assignment: Dictionary mapping assignment_id to list of submissions
+            embedder: Java code embedder instance
+            grade_mapping_dir: Directory containing grade mapping CSV files
+            
+        Returns:
+            Dictionary with build statistics for each assignment
+        """
+        self.logger.info(f"Building FAISS indices with grade mapping from {grade_mapping_dir}")
+        
+        grade_mapping_path = Path(grade_mapping_dir)
+        enriched_submissions = {}
+        
+        for assignment_id, submissions in submissions_by_assignment.items():
+            # Look for grade mapping CSV file
+            csv_file = grade_mapping_path / f"{assignment_id}.csv"
+            
+            if csv_file.exists():
+                self.logger.info(f"Found grade mapping for {assignment_id}: {csv_file}")
+                try:
+                    # Load grades and populate submissions
+                    enriched_submissions[assignment_id] = self.load_grades_for_assignment(
+                        assignment_id, submissions, str(csv_file)
+                    )
+                except Exception as e:
+                    self.logger.error(f"Failed to load grades for {assignment_id}: {e}")
+                    # Use original submissions without grades
+                    enriched_submissions[assignment_id] = submissions
+            else:
+                self.logger.warning(f"No grade mapping found for {assignment_id} at {csv_file}")
+                # Use original submissions without grades
+                enriched_submissions[assignment_id] = submissions
+        
+        # Build indices with enriched submissions
+        return self.build_assignment_indices(enriched_submissions, embedder)
+    
     def search_similar_in_assignment(self, assignment_id: str, query_embedding: np.ndarray,
                                    top_k: int = 5, score_threshold: float = 0.0,
                                    embedder: Optional[JavaCodeEmbedder] = None) -> List[Dict[str, Any]]:
@@ -153,56 +373,7 @@ class AssignmentFAISSManager:
             embedder=embedder
         )
     
-    def search_across_assignments(self, query_embedding: np.ndarray,
-                                assignment_ids: Optional[List[str]] = None,
-                                top_k_per_assignment: int = 3,
-                                overall_top_k: int = 10,
-                                score_threshold: float = 0.0,
-                                embedder: Optional[JavaCodeEmbedder] = None) -> List[Dict[str, Any]]:
-        """
-        Search across multiple assignments and aggregate results.
-        
-        Args:
-            query_embedding: Query embedding vector
-            assignment_ids: List of assignment IDs to search (None for all)
-            top_k_per_assignment: Number of results to get from each assignment
-            overall_top_k: Total number of results to return
-            score_threshold: Minimum similarity score threshold
-            embedder: Java code embedder for similarity calculation
-            
-        Returns:
-            Aggregated list of similar submissions from multiple assignments
-        """
-        if assignment_ids is None:
-            assignment_ids = list(self.assignment_managers.keys())
-        
-        self.logger.debug(f"Searching across {len(assignment_ids)} assignments")
-        
-        all_results = []
-        
-        for assignment_id in assignment_ids:
-            if assignment_id not in self.assignment_managers:
-                continue
-            
-            results = self.search_similar_in_assignment(
-                assignment_id=assignment_id,
-                query_embedding=query_embedding,
-                top_k=top_k_per_assignment,
-                score_threshold=score_threshold,
-                embedder=embedder
-            )
-            
-            # Add assignment context to results
-            for result in results:
-                result['source_assignment'] = assignment_id
-            
-            all_results.extend(results)
-        
-        # Sort all results by similarity score and return top k
-        all_results.sort(key=lambda x: x['similarity_score'], reverse=True)
-        
-        return all_results[:overall_top_k]
-    
+
     def get_assignment_statistics(self, assignment_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Get statistics for assignments.

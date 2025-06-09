@@ -107,6 +107,19 @@ def parse_arguments():
     )
     
     parser.add_argument(
+        "--grade-mapping-dir",
+        type=str,
+        default="src/faiss/grade_mapping",
+        help="Directory containing grade mapping CSV files"
+    )
+    
+    parser.add_argument(
+        "--with-grades",
+        action="store_true",
+        help="Enable grade mapping integration"
+    )
+    
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable verbose logging"
@@ -255,10 +268,20 @@ def main():
         
         # Build assignment-specific indices
         logger.info("Building assignment-specific FAISS indices...")
-        build_stats = assignment_manager.build_assignment_indices(
-            submissions_by_assignment=submissions_by_assignment,
-            embedder=embedder
-        )
+        
+        if args.with_grades:
+            logger.info(f"Building indices with grade mapping from {args.grade_mapping_dir}")
+            build_stats = assignment_manager.build_assignment_indices_with_grades(
+                submissions_by_assignment=submissions_by_assignment,
+                embedder=embedder,
+                grade_mapping_dir=args.grade_mapping_dir
+            )
+        else:
+            logger.info("Building indices without grade mapping")
+            build_stats = assignment_manager.build_assignment_indices(
+                submissions_by_assignment=submissions_by_assignment,
+                embedder=embedder
+            )
         
         logger.info("Assignment-specific indices build completed successfully!")
         
@@ -307,6 +330,8 @@ def main():
         
         # Usage examples
         print("\n[USAGE] Usage Examples:")
+        print("  # Build indices with grade mapping:")
+        print(f"  python src/faiss/build_assignment_indices.py --with-grades --grade-mapping-dir {args.grade_mapping_dir}")
         print("  # Search within specific assignment:")
         print(f"  from src.faiss.assignment_faiss_manager import AssignmentFAISSManager")
         print(f"  from src.faiss.embedder import create_java_embedder")
@@ -314,8 +339,9 @@ def main():
         print("  manager.load_assignment_indices()")
         print(f"  embedder = create_java_embedder(model_name='{args.model_name}')")
         print("  results = manager.search_similar_in_assignment('assignment_id', query_embedding)")
-        print("\n  # Search across multiple assignments:")
-        print("  results = manager.search_across_assignments(query_embedding, assignment_ids=['id1', 'id2'])")
+        print("  # Results will include grade and feedback if loaded with --with-grades")
+        print("\n  # Evaluate retrieval with grades:")
+        print(f"  python src/faiss/evaluate_retrieval.py --assignment {args.assignment or 'task4_GildedRoseKata'} --with-grades")
         
         print(f"\n[EVAL] Quick Start Evaluation:")
         print(f"  python evaluate_embedder_performance.py --model-name {args.model_name}")

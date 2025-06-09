@@ -5,7 +5,7 @@ This module provides vector database capabilities for historical Java code conte
 using StarCoder2 embeddings. It includes simplified code embedding and assignment-specific indexing.
 
 Components:
-- JavaCodeEmbedder: Simple Java code embeddings using StarCoder2
+- OllamaJavaCodeEmbedder: Java code embeddings using Ollama with StarCoder2
 - Processor: Extract and process submissions from ZIP files
 - FAISS Manager: Traditional single-index FAISS management
 - Assignment FAISS Manager: Per-assignment FAISS indices for better efficiency
@@ -14,11 +14,24 @@ Components:
 Author: Auto-generated
 """
 
-from .embedder import JavaCodeEmbedder, EmbedderConfig, create_java_embedder
+from .embedder import JavaCodeEmbedder, OllamaJavaCodeEmbedder, EmbedderConfig, create_java_embedder
 from .processor import SubmissionProcessor, Submission
-from .faiss_manager import FAISSManager
 from .assignment_faiss_manager import AssignmentFAISSManager
-from .historical_context import HistoricalContextProvider
+
+# Optional imports that may not exist
+try:
+    from .faiss_manager import FAISSManager
+    FAISS_MANAGER_AVAILABLE = True
+except ImportError:
+    FAISSManager = None
+    FAISS_MANAGER_AVAILABLE = False
+
+try:
+    from .historical_context import HistoricalContextProvider
+    HISTORICAL_CONTEXT_AVAILABLE = True
+except ImportError:
+    HistoricalContextProvider = None
+    HISTORICAL_CONTEXT_AVAILABLE = False
 
 # Import AST analyzer if available
 try:
@@ -30,23 +43,27 @@ except ImportError:
 
 __all__ = [
     # Core embedding and processing
-    'JavaCodeEmbedder',
+    'JavaCodeEmbedder',  # Backward compatibility alias
+    'OllamaJavaCodeEmbedder',  # Main embedder class
     'EmbedderConfig',
     'create_java_embedder',
     'SubmissionProcessor',
     'Submission',
     
     # FAISS management
-    'FAISSManager',
     'AssignmentFAISSManager',
-    
-    # Historical context interface
-    'HistoricalContextProvider',
     
     # AST analysis
     'ASTJavaAnalyzer',
     'AST_ANALYZER_AVAILABLE',
 ]
+
+# Add optional components to __all__ if available
+if FAISS_MANAGER_AVAILABLE:
+    __all__.append('FAISSManager')
+
+if HISTORICAL_CONTEXT_AVAILABLE:
+    __all__.append('HistoricalContextProvider')
 
 __version__ = "3.0.0"
 
@@ -84,7 +101,7 @@ def create_embedder(model_name: str = DEFAULT_MODEL,
         max_length: Maximum sequence length
         
     Returns:
-        JavaCodeEmbedder instance
+        OllamaJavaCodeEmbedder instance
     """
     return create_java_embedder(
         model_name=model_name,
@@ -93,5 +110,5 @@ def create_embedder(model_name: str = DEFAULT_MODEL,
     )
 
 # Backward compatibility aliases
-HybridCodeEmbedder = JavaCodeEmbedder
-ImprovedCodeEmbedder = JavaCodeEmbedder 
+HybridCodeEmbedder = OllamaJavaCodeEmbedder
+ImprovedCodeEmbedder = OllamaJavaCodeEmbedder 

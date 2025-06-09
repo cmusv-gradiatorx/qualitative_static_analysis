@@ -140,7 +140,9 @@ class RetrievalEvaluator:
                         'similarity_score': round(similarity_score, 4),
                         'assignment_id': result['submission'].assignment_id,
                         'is_self': similar_student_id == query_student_id,
-                        'same_assignment': result['submission'].assignment_id == assignment_id
+                        'same_assignment': result['submission'].assignment_id == assignment_id,
+                        'grade': getattr(result['submission'], 'score', None),
+                        'feedback_snippet': getattr(result['submission'], 'feedback', '')[:100] + "..." if hasattr(result['submission'], 'feedback') and result['submission'].feedback else None
                     }
                     
                     query_result['similar_submissions'].append(similar_info)
@@ -186,94 +188,7 @@ class RetrievalEvaluator:
         
         return metrics
     
-    def evaluate_cross_assignment(self, all_submissions_by_assignment: Dict[str, List[Any]], 
-                                 sample_size: int = 3, top_k: int = 10) -> Dict[str, Any]:
-        """
-        Evaluate cross-assignment retrieval to measure discrimination between assignments.
-        
-        Args:
-            all_submissions_by_assignment: All submissions grouped by assignment
-            sample_size: Number of submissions to sample from each assignment
-            top_k: Number of top results to retrieve
-            
-        Returns:
-            Cross-assignment evaluation metrics
-        """
-        self.logger.info("Evaluating cross-assignment retrieval")
-        
-        cross_metrics = {
-            'total_queries': 0,
-            'correct_assignment_in_top_1': 0,
-            'correct_assignment_in_top_3': 0,
-            'correct_assignment_in_top_5': 0,
-            'assignment_confusion_matrix': defaultdict(lambda: defaultdict(int)),
-            'query_details': []
-        }
-        
-        for query_assignment, submissions in all_submissions_by_assignment.items():
-            if len(submissions) == 0:
-                continue
-                
-            # Sample queries from this assignment
-            sample_count = min(sample_size, len(submissions))
-            sampled = random.sample(submissions, sample_count)
-            
-            for query_submission in sampled:
-                try:
-                    # Generate embedding
-                    query_embedding = self.embedder.embed_codebase(query_submission.code_files)
-                    
-                    # Search across all assignments
-                    results = self.assignment_manager.search_across_assignments(
-                        query_embedding=query_embedding,
-                        assignment_ids=list(all_submissions_by_assignment.keys()),
-                        top_k_per_assignment=2,
-                        overall_top_k=top_k,
-                        embedder=self.embedder
-                    )
-                    
-                    if not results:
-                        continue
-                    
-                    cross_metrics['total_queries'] += 1
-                    
-                    # Check if correct assignment appears in top results
-                    for rank, result in enumerate(results, 1):
-                        result_assignment = result['submission'].assignment_id
-                        
-                        if result_assignment == query_assignment:
-                            if rank == 1:
-                                cross_metrics['correct_assignment_in_top_1'] += 1
-                            if rank <= 3:
-                                cross_metrics['correct_assignment_in_top_3'] += 1
-                            if rank <= 5:
-                                cross_metrics['correct_assignment_in_top_5'] += 1
-                            break
-                    
-                    # Update confusion matrix
-                    if results:
-                        predicted_assignment = results[0]['submission'].assignment_id
-                        cross_metrics['assignment_confusion_matrix'][query_assignment][predicted_assignment] += 1
-                    
-                    # Store query details
-                    cross_metrics['query_details'].append({
-                        'query_assignment': query_assignment,
-                        'query_file': query_submission.file_name,
-                        'top_3_assignments': [r['submission'].assignment_id for r in results[:3]],
-                        'top_3_similarities': [r['similarity_score'] for r in results[:3]]
-                    })
-                    
-                except Exception as e:
-                    self.logger.error(f"Error in cross-assignment evaluation: {e}")
-                    continue
-        
-        # Calculate final cross-assignment metrics
-        if cross_metrics['total_queries'] > 0:
-            cross_metrics['top_1_accuracy'] = cross_metrics['correct_assignment_in_top_1'] / cross_metrics['total_queries']
-            cross_metrics['top_3_accuracy'] = cross_metrics['correct_assignment_in_top_3'] / cross_metrics['total_queries']
-            cross_metrics['top_5_accuracy'] = cross_metrics['correct_assignment_in_top_5'] / cross_metrics['total_queries']
-        
-        return cross_metrics
+
     
     def run_full_evaluation(self, submissions_by_assignment: Dict[str, List[Any]], 
                            sample_size: int = 5, top_k: int = 10,
@@ -314,9 +229,7 @@ class RetrievalEvaluator:
                 'target_assignments': target_assignments or list(submissions_by_assignment.keys())
             },
             'assignment_results': {},
-            'cross_assignment_results': {},
-            'overall_metrics': {},
-            'cross_assignment_metrics': {}
+            'overall_metrics': {}
         }
         
         # Evaluate each assignment individually
@@ -326,15 +239,7 @@ class RetrievalEvaluator:
             overall_results['assignment_results'][assignment_id] = metrics
             assignment_metrics.append(metrics)
         
-        # Evaluate cross-assignment retrieval
-        if len(submissions_by_assignment) > 1:
-            cross_metrics = self.evaluate_cross_assignment(submissions_by_assignment, sample_size//2, top_k)
-            overall_results['cross_assignment_results'] = cross_metrics
-            overall_results['cross_assignment_metrics'] = {
-                'top_1_assignment_accuracy': cross_metrics.get('top_1_accuracy', 0),
-                'top_3_assignment_accuracy': cross_metrics.get('top_3_accuracy', 0), 
-                'top_5_assignment_accuracy': cross_metrics.get('top_5_accuracy', 0)
-            }
+        # Note: Cross-assignment evaluation removed since search is now assignment-specific only
         
         # Calculate overall metrics
         if assignment_metrics:
@@ -390,8 +295,11 @@ class RetrievalEvaluator:
                 for similar in query_result['similar_submissions']:
                     self_indicator = " 🎯 [SELF]" if similar['is_self'] else ""
                     same_assignment = " ✅" if similar['same_assignment'] else " ❌"
+                    grade_info = f" | Grade: {similar['grade']:.2f}" if similar['grade'] is not None else ""
                     print(f"    {similar['rank']:2d}. {similar['submission_name']}")
-                    print(f"        Student: {similar['student_id']} | Score: {similar['similarity_score']:.4f}{same_assignment}{self_indicator}")
+                    print(f"        Student: {similar['student_id']} | Score: {similar['similarity_score']:.4f}{grade_info}{same_assignment}{self_indicator}")
+                    if similar['feedback_snippet']:
+                        print(f"        Feedback: {similar['feedback_snippet']}")
         
         else:
             # Multi-assignment results
@@ -401,12 +309,6 @@ class RetrievalEvaluator:
             print(f"[OVERALL] Average Similarity: {overall_metrics['avg_similarity']:.4f}")
             print(f"[STATS] Assignments Evaluated: {overall_metrics['assignments_evaluated']}")
             print(f"[STATS] Total Queries Processed: {overall_metrics['total_queries_processed']}")
-            
-            if results.get('cross_assignment_metrics'):
-                cross_metrics = results['cross_assignment_metrics']
-                print(f"[CROSS] Top-1 Assignment Accuracy: {cross_metrics.get('top_1_assignment_accuracy', 0):.2%}")
-                print(f"[CROSS] Top-3 Assignment Accuracy: {cross_metrics.get('top_3_assignment_accuracy', 0):.2%}")
-                print(f"[CROSS] Top-5 Assignment Accuracy: {cross_metrics.get('top_5_assignment_accuracy', 0):.2%}")
             
             print(f"\nPer-Assignment Results:")
             for assignment_id, metrics in results['assignment_results'].items():
@@ -476,6 +378,19 @@ def main():
         type=str,
         default=None,
         help="Specific assignment to evaluate (default: all assignments)"
+    )
+    
+    parser.add_argument(
+        "--grade-mapping-dir",
+        type=str,
+        default="src/faiss/grade_mapping",
+        help="Directory containing grade mapping CSV files"
+    )
+    
+    parser.add_argument(
+        "--with-grades",
+        action="store_true",
+        help="Enable grade mapping integration for enriched evaluation"
     )
     
     parser.add_argument(
@@ -569,6 +484,30 @@ def main():
         if not submissions_by_assignment:
             logger.error("No submissions found")
             sys.exit(1)
+        
+        # Enrich with grade mapping if requested
+        if args.with_grades:
+            logger.info(f"Enriching submissions with grade mapping from {args.grade_mapping_dir}")
+            enriched_submissions = {}
+            grade_mapping_path = Path(args.grade_mapping_dir)
+            
+            for assignment_id, submissions in submissions_by_assignment.items():
+                csv_file = grade_mapping_path / f"{assignment_id}.csv"
+                
+                if csv_file.exists():
+                    try:
+                        enriched_submissions[assignment_id] = assignment_manager.load_grades_for_assignment(
+                            assignment_id, submissions, str(csv_file)
+                        )
+                        logger.info(f"Enriched {assignment_id} with grades from {csv_file}")
+                    except Exception as e:
+                        logger.error(f"Failed to load grades for {assignment_id}: {e}")
+                        enriched_submissions[assignment_id] = submissions
+                else:
+                    logger.warning(f"No grade mapping found for {assignment_id}")
+                    enriched_submissions[assignment_id] = submissions
+            
+            submissions_by_assignment = enriched_submissions
         
         # Run evaluation
         evaluator = RetrievalEvaluator(assignment_manager, embedder, logger)
