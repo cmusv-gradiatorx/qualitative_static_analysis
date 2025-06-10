@@ -113,3 +113,4 @@ src/faiss/data/
 faiss_performance_evaluation*
 
 src/faiss/assignment_indices/*
+src/faiss/clustering/models/*

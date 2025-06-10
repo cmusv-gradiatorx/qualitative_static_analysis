@@ -17,6 +17,7 @@ import os
 import sys
 import argparse
 import json
+import numpy as np
 from pathlib import Path
 
 # Load environment variables
@@ -36,6 +37,24 @@ from src.faiss.clustering.cluster_manager import ClusteringManager
 from src.faiss.processor import MultiFolderProcessor
 from src.faiss.embedder import create_java_embedder
 from src.utils.logger import get_logger, setup_logger
+
+
+def make_json_serializable(obj):
+    """Convert NumPy types to Python types for JSON serialization"""
+    if isinstance(obj, dict):
+        return {key: make_json_serializable(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [make_json_serializable(item) for item in obj]
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, (np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, (np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    else:
+        return obj
 
 
 def parse_arguments():
@@ -73,16 +92,11 @@ def parse_arguments():
     parser.add_argument(
         "--model-name",
         type=str,
-        default="starcoder2:15b",
+        default="starCoder2:15b",
         help="Ollama model name for embeddings"
     )
     
-    parser.add_argument(
-        "--ollama-url",
-        type=str,
-        default=None,
-        help="Ollama base URL (uses env var if not provided)"
-    )
+
     
     parser.add_argument(
         "--issue-algorithm",
@@ -154,14 +168,10 @@ def main():
         # Initialize clustering manager
         logger.info("Initializing clustering manager...")
         
-        # Get Ollama URL
-        ollama_url = args.ollama_url or os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
-        
-        # Create embedder
+        # Create embedder with Ollama (default)
         embedder = create_java_embedder(
             model_name=args.model_name,
-            use_ollama=True,
-            ollama_base_url=ollama_url
+            use_ollama=True
         )
         
         clustering_manager = ClusteringManager(args.assignment, embedder)
@@ -181,12 +191,12 @@ def main():
         # Train score-based clustering
         logger.info("Training score-based clustering...")
         score_results = clustering_manager.train_score_clustering()
-        logger.info(f"Score clustering results: {json.dumps(score_results, indent=2)}")
+        logger.info(f"Score clustering results: {json.dumps(make_json_serializable(score_results), indent=2)}")
         
         # Train issue-based clustering
         logger.info(f"Training issue-based clustering with {args.issue_algorithm}...")
         issue_results = clustering_manager.train_issue_clustering(args.issue_algorithm)
-        logger.info(f"Issue clustering results: {json.dumps(issue_results, indent=2)}")
+        logger.info(f"Issue clustering results: {json.dumps(make_json_serializable(issue_results), indent=2)}")
         
         # Save models
         output_path = Path(args.output_dir) / args.assignment
@@ -199,7 +209,7 @@ def main():
             'training_timestamp': clustering_manager.score_cluster_info,  # This contains timestamp
             'model_config': {
                 'model_name': args.model_name,
-                'ollama_url': ollama_url,
+                'ollama_url': os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434'),
                 'issue_algorithm': args.issue_algorithm
             },
             'data_stats': {
@@ -214,7 +224,7 @@ def main():
         
         report_path = output_path / "training_report.json"
         with open(report_path, 'w') as f:
-            json.dump(report, f, indent=2, default=str)
+            json.dump(make_json_serializable(report), f, indent=2, default=str)
         
         # Print human-readable summary
         print("\n" + "="*80)
@@ -228,7 +238,15 @@ def main():
         print(f"\n[SCORE CLUSTERING]")
         print(f"  Clusters: {score_results['n_clusters']}")
         print(f"  Silhouette Score: {score_results['silhouette_score']:.3f}")
-        print(f"  Unique Scores: {score_results['unique_scores']}")
+        
+        # Show predefined ranges instead of unique scores
+        if 'score_ranges' in score_results:
+            ranges_str = ", ".join([f"{int(r[0]*100)}-{int(r[1]*100)}%" for r in score_results['score_ranges']])
+            print(f"  Score Ranges: {ranges_str}")
+        
+        # Show actual unique scores found in data
+        unique_scores = list(set(sub.score for sub in clustering_manager.submissions))
+        print(f"  Unique Scores Found: {sorted(unique_scores)}")
         
         print(f"\n[ISSUE CLUSTERING]")
         print(f"  Algorithm: {issue_results['algorithm']}")

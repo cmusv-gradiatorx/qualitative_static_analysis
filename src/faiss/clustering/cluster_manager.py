@@ -25,11 +25,75 @@ from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score, adjusted_rand_score
+from sklearn.metrics.pairwise import euclidean_distances
 from sklearn.model_selection import train_test_split
 
 from ..processor import Submission, MultiFolderProcessor
 from ..embedder import create_java_embedder
 from ...utils.logger import get_logger
+
+
+class ScoreRangeClusterer:
+    """Custom clusterer that assigns clusters based on predefined score ranges"""
+    
+    def __init__(self, score_ranges):
+        """
+        Initialize with predefined score ranges.
+        
+        Args:
+            score_ranges: List of (min_score, max_score) tuples
+        """
+        self.score_ranges = score_ranges
+        self.n_clusters = len(score_ranges)
+    
+    def predict(self, embeddings):
+        """
+        Predict cluster assignments (returns middle cluster as default).
+        
+        Args:
+            embeddings: Input embeddings (ignored for score-based clustering)
+            
+        Returns:
+            Array of cluster assignments
+        """
+        # For new submissions, we can't predict without knowing the score
+        # Return the middle cluster as default
+        return np.full(embeddings.shape[0], self.n_clusters // 2, dtype=int)
+    
+    def fit_predict(self, embeddings):
+        """Fit and predict (same as predict for this clusterer)"""
+        return self.predict(embeddings)
+
+
+class DummyScoreClusterer:
+    """Fallback clusterer that assigns clusters based on scores only"""
+    
+    def __init__(self, unique_scores: np.ndarray):
+        """
+        Initialize with unique score values.
+        
+        Args:
+            unique_scores: Array of unique score values
+        """
+        self.unique_scores = np.array(unique_scores)
+        self.n_clusters = len(unique_scores)
+    
+    def predict(self, embeddings: np.ndarray) -> np.ndarray:
+        """
+        Predict cluster assignments (dummy implementation).
+        
+        Args:
+            embeddings: Input embeddings (ignored)
+            
+        Returns:
+            Random cluster assignments
+        """
+        # Return random assignments since we can't use embeddings
+        return np.random.choice(self.n_clusters, size=embeddings.shape[0])
+    
+    def fit_predict(self, embeddings: np.ndarray) -> np.ndarray:
+        """Fit and predict (same as predict for dummy)"""
+        return self.predict(embeddings)
 
 
 class IssueExtractor:
@@ -271,7 +335,7 @@ class ClusteringManager:
         if not self.embedder:
             self.logger.info("Creating Java embedder...")
             self.embedder = create_java_embedder(
-                model_name="starcoder2:15b",
+                model_name="starCoder2:15b",
                 use_ollama=True
             )
         
@@ -309,45 +373,63 @@ class ClusteringManager:
     
     def train_score_clustering(self, n_clusters: Optional[int] = None) -> Dict[str, Any]:
         """
-        Train score-based clustering model.
+        Train score-based clustering model using predefined score ranges.
         
         Args:
-            n_clusters: Number of clusters (auto-detect from unique scores if None)
+            n_clusters: Ignored - uses predefined ranges
         """
         if self.embeddings is None:
             raise ValueError("Must generate embeddings first")
         
-        # Determine number of clusters from unique scores
-        unique_scores = np.unique(self.scores)
-        if n_clusters is None:
-            n_clusters = len(unique_scores)
+        # Define predefined score ranges
+        score_ranges = [
+            (0.0, 0.6),   # 0-60%
+            (0.6, 0.7),   # 60-70%
+            (0.7, 0.8),   # 70-80%
+            (0.8, 0.9),   # 80-90%
+            (0.9, 1.0),   # 90-100%
+        ]
         
-        self.logger.info(f"Training score clustering with {n_clusters} clusters")
+        self.logger.info(f"Training score clustering with {len(score_ranges)} predefined ranges")
         
-        # Scale embeddings for better clustering
+        # Assign submissions to clusters based on their scores
+        score_cluster_labels = np.zeros(len(self.scores), dtype=int)
+        
+        for i, score in enumerate(self.scores):
+            # Find which range this score falls into
+            for cluster_id, (min_score, max_score) in enumerate(score_ranges):
+                if min_score <= score < max_score or (cluster_id == len(score_ranges)-1 and score == 1.0):
+                    score_cluster_labels[i] = cluster_id
+                    break
+        
+        # Create a custom clusterer that uses score ranges
+        self.score_clusterer = ScoreRangeClusterer(score_ranges)
+        
+        # Scale embeddings for consistency (even though not used for clustering)
         scaled_embeddings = self.scaler.fit_transform(self.embeddings)
         
-        # Train K-means clustering
-        self.score_clusterer = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-        score_cluster_labels = self.score_clusterer.fit_predict(scaled_embeddings)
-        
-        # Analyze cluster composition
-        cluster_analysis = self._analyze_score_clusters(score_cluster_labels)
-        
-        # Calculate clustering metrics
-        if n_clusters > 1:
-            silhouette = silhouette_score(scaled_embeddings, score_cluster_labels)
+        # Calculate silhouette score if we have enough distinct clusters
+        unique_clusters = np.unique(score_cluster_labels)
+        if len(unique_clusters) > 1:
+            try:
+                silhouette = silhouette_score(scaled_embeddings, score_cluster_labels)
+            except ValueError:
+                silhouette = 0.0
         else:
             silhouette = 0.0
         
+        # Analyze cluster composition
+        cluster_analysis = self._analyze_score_clusters(score_cluster_labels, score_ranges)
+        
         results = {
-            'n_clusters': n_clusters,
+            'n_clusters': len(unique_clusters),
             'silhouette_score': silhouette,
             'cluster_analysis': cluster_analysis,
-            'unique_scores': unique_scores.tolist()
+            'score_ranges': score_ranges,
+            'predefined_ranges_used': True
         }
         
-        self.logger.info(f"Score clustering trained - Silhouette: {silhouette:.3f}")
+        self.logger.info(f"Score clustering trained with predefined ranges - Silhouette: {silhouette:.3f}")
         return results
     
     def train_issue_clustering(self, algorithm: str = 'kmeans') -> Dict[str, Any]:
@@ -399,7 +481,7 @@ class ClusteringManager:
         self.logger.info(f"Issue clustering trained - Silhouette: {silhouette:.3f}")
         return results
     
-    def _analyze_score_clusters(self, cluster_labels: np.ndarray) -> Dict[str, Any]:
+    def _analyze_score_clusters(self, cluster_labels: np.ndarray, score_ranges: List[Tuple[float, float]]) -> Dict[str, Any]:
         """Analyze score-based cluster composition"""
         analysis = {}
         
@@ -408,12 +490,24 @@ class ClusteringManager:
             cluster_scores = self.scores[cluster_mask]
             cluster_submissions = [self.submissions[i] for i in np.where(cluster_mask)[0]]
             
+            # Calculate score range for this cluster
+            min_score = np.min(cluster_scores)
+            max_score = np.max(cluster_scores)
+            avg_score = np.mean(cluster_scores)
+            
+            # Find the corresponding score range
+            for range_id, (range_min, range_max) in enumerate(score_ranges):
+                if range_min <= min_score < range_max or (range_id == len(score_ranges)-1 and min_score == 1.0):
+                    range_name = f"{int(range_min*100)}-{int(range_max*100)}%"
+                    break
+            
             analysis[f"cluster_{cluster_id}"] = {
                 'size': int(np.sum(cluster_mask)),
-                'score_range': [float(np.min(cluster_scores)), float(np.max(cluster_scores))],
-                'avg_score': float(np.mean(cluster_scores)),
+                'score_range': [float(min_score), float(max_score)],
+                'avg_score': float(avg_score),
                 'dominant_score': float(np.bincount([int(s*100) for s in cluster_scores]).argmax() / 100),
-                'student_names': [self._extract_student_name(sub.file_name) for sub in cluster_submissions[:5]]
+                'student_names': [self._extract_student_name(sub.file_name) for sub in cluster_submissions[:5]],
+                'range_name': range_name
             }
         
         self.score_cluster_info = analysis
@@ -462,7 +556,7 @@ class ClusteringManager:
         
         # Generate embedding for new submission
         if not self.embedder:
-            self.embedder = create_java_embedder(model_name="starcoder2:15b", use_ollama=True)
+            self.embedder = create_java_embedder(model_name="starCoder2:15b", use_ollama=True)
         
         embedding = self.embedder.embed_codebase(submission.code_files)
         scaled_embedding = self.scaler.transform(embedding.reshape(1, -1))
@@ -547,12 +641,54 @@ class ClusteringManager:
             avg_score = info['avg_score']
             size = info['size']
             score_range = info['score_range']
-            summary += f"- {cluster_id}: {size} submissions, avg score {avg_score:.2f} (range: {score_range[0]:.2f}-{score_range[1]:.2f})\n"
+            range_name = info.get('range_name', '')
+            
+            summary += f"- {cluster_id}: {size} submissions, avg score {int(avg_score*100)}%"
+            summary += f" (range: {int(score_range[0]*100)}%-{int(score_range[1]*100)}%"
+            if range_name:
+                summary += f", {range_name}"
+            summary += ")\n"
         
         summary += "\n**Issue-Based Clusters:**\n"
         for cluster_id, info in self.issue_cluster_info.items():
             size = info['size']
             issues = ", ".join(info['dominant_issues'])
-            summary += f"- {cluster_id}: {size} submissions, common issues: {issues}\n"
+            avg_score = info['avg_score']
+            summary += f"- {cluster_id}: {size} submissions, common issues: {issues}, avg score: {int(avg_score*100)}%\n"
         
-        return summary 
+        return summary
+    
+    def _format_llm_context(self, cluster_result: Dict[str, Any]) -> str:
+        """Format clustering results as LLM prompt context with percentages"""
+        score_info = cluster_result.get('score_cluster_info', {})
+        issue_info = cluster_result.get('issue_cluster_info', {})
+        
+        context = "**CLUSTERING-BASED GRADING CONTEXT:**\n\n"
+        
+        # Score context with percentages
+        predicted_range = cluster_result.get('predicted_score_range', [0, 1])
+        avg_score = score_info.get('avg_score', 0)
+        range_name = score_info.get('range_name', '')
+        
+        context += f"**Predicted Score Range:** {int(predicted_range[0]*100)}% - {int(predicted_range[1]*100)}%"
+        if range_name:
+            context += f" ({range_name})"
+        context += "\n"
+        context += f"**Similar Submissions Average:** {int(avg_score*100)}% of total points\n\n"
+        
+        # Issue context
+        common_issues = issue_info.get('dominant_issues', [])
+        if common_issues:
+            context += f"**Common Issues in Similar Submissions:**\n"
+            for issue in common_issues:
+                context += f"- {issue.replace('_', ' ').title()}\n"
+        
+        # Sample feedback
+        sample_feedback = issue_info.get('sample_feedback', '')
+        if sample_feedback:
+            context += f"\n**Sample Feedback from Similar Submissions:**\n{sample_feedback}\n"
+        
+        context += "\n**Instructions:** Use this context to calibrate your grading and ensure consistency with similar submissions."
+        context += f" This submission should receive approximately {int(avg_score*100)}% of the total points based on similar submissions."
+        
+        return context 

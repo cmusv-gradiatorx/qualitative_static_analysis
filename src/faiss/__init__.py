@@ -16,15 +16,10 @@ Author: Auto-generated
 
 from .embedder import JavaCodeEmbedder, OllamaJavaCodeEmbedder, EmbedderConfig, create_java_embedder
 from .processor import SubmissionProcessor, Submission
-from .assignment_faiss_manager import AssignmentFAISSManager
+from .faiss_manager import FAISSManager
 
-# Optional imports that may not exist
-try:
-    from .faiss_manager import FAISSManager
-    FAISS_MANAGER_AVAILABLE = True
-except ImportError:
-    FAISSManager = None
-    FAISS_MANAGER_AVAILABLE = False
+# FAISS Manager is now always available
+FAISS_MANAGER_AVAILABLE = True
 
 try:
     from .historical_context import HistoricalContextProvider
@@ -51,16 +46,14 @@ __all__ = [
     'Submission',
     
     # FAISS management
-    'AssignmentFAISSManager',
+    'FAISSManager',
     
     # AST analysis
     'ASTJavaAnalyzer',
     'AST_ANALYZER_AVAILABLE',
 ]
 
-# Add optional components to __all__ if available
-if FAISS_MANAGER_AVAILABLE:
-    __all__.append('FAISSManager')
+# FAISSManager is already in __all__, no need to add it again
 
 if HISTORICAL_CONTEXT_AVAILABLE:
     __all__.append('HistoricalContextProvider')
@@ -68,7 +61,7 @@ if HISTORICAL_CONTEXT_AVAILABLE:
 __version__ = "3.0.0"
 
 # Configuration constants
-DEFAULT_MODEL = "bigcode/starcoder2-3b"
+DEFAULT_MODEL = "bigcode/starCoder2-3b"
 DEFAULT_INDEX_TYPE = "flat"
 DEFAULT_MAX_LENGTH = 2048
 
@@ -82,9 +75,9 @@ def create_assignment_manager(base_path: str, index_type: str = DEFAULT_INDEX_TY
         index_type: FAISS index type
         
     Returns:
-        AssignmentFAISSManager instance
+        FAISSManager instance
     """
-    return AssignmentFAISSManager(
+    return FAISSManager(
         base_index_path=base_path,
         index_type=index_type
     )

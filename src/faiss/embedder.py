@@ -39,7 +39,7 @@ except ImportError:
 @dataclass
 class EmbedderConfig:
     """Configuration for the Java code embedder"""
-    model_name: str = "starcoder2:3b"  # Default to Ollama StarCoder2
+    model_name: str = "starCoder2:3b"  # Default to Ollama StarCoder2
     use_ollama: bool = True  # Use Ollama API by default
     ollama_base_url: str = "http://localhost:11434"  # Default Ollama URL
     device: Optional[str] = None  # Auto-detect if None (for transformers)
@@ -85,9 +85,12 @@ class OllamaJavaCodeEmbedder:
     def _get_embedding_dimension(self) -> int:
         """Get embedding dimension based on model"""
         model_dimensions = {
-            'starcoder2:3b': 2048,
-            'starcoder2:7b': 4096, 
-            'starcoder2:15b': 6144,
+            'starCoder2:3b': 2048,
+            'starCoder2:7b': 4096, 
+            'starCoder2:15b': 6144,
+            'starCoder2:3b': 2048,  # Fallback for old naming
+            'starCoder2:7b': 4096,  # Fallback for old naming
+            'starCoder2:15b': 6144,  # Fallback for old naming
             'starcoder:3b': 2048,
             'starcoder:7b': 4096,
             'qwen2.5-coder:3b': 2048,
@@ -100,7 +103,7 @@ class OllamaJavaCodeEmbedder:
         if self.config.model_name in model_dimensions:
             return model_dimensions[self.config.model_name]
         
-        # Check for partial matches (e.g., "starcoder2" in model name)
+        # Check for partial matches (e.g., "starCoder2" in model name)
         for model_key, dim in model_dimensions.items():
             if model_key.split(':')[0] in self.config.model_name:
                 return dim
@@ -621,7 +624,7 @@ This code represents a complete Java implementation."""
 
 
 # Factory function for easy initialization with Ollama support
-def create_java_embedder(model_name: str = "starcoder2:3b",
+def create_java_embedder(model_name: str = "starCoder2:3b",
                         use_ollama: bool = True,
                         ollama_base_url: str = None,
                         device: Optional[str] = None,
@@ -630,7 +633,7 @@ def create_java_embedder(model_name: str = "starcoder2:3b",
     Factory function to create a Java code embedder with custom configuration.
     
     Args:
-        model_name: Model name (Ollama format like "starcoder2:3b")
+        model_name: Model name (Ollama format like "starCoder2:3b")
         use_ollama: Whether to use Ollama API (default: True)
         ollama_base_url: Ollama base URL (loads from env if None)
         device: Device to use for transformers (auto-detect if None)

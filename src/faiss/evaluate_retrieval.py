@@ -42,7 +42,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.faiss.embedder import create_java_embedder
-from src.faiss.assignment_faiss_manager import AssignmentFAISSManager
+from src.faiss.faiss_manager import FAISSManager
 from src.faiss.processor import MultiFolderProcessor
 from src.utils.logger import get_logger, setup_logger
 
@@ -50,7 +50,7 @@ from src.utils.logger import get_logger, setup_logger
 class RetrievalEvaluator:
     """Evaluates the effectiveness of Java code retrieval system"""
     
-    def __init__(self, assignment_manager: AssignmentFAISSManager, embedder, logger):
+    def __init__(self, assignment_manager: FAISSManager, embedder, logger):
         self.assignment_manager = assignment_manager
         self.embedder = embedder
         self.logger = logger
@@ -203,7 +203,7 @@ class RetrievalEvaluator:
             target_assignments: Specific assignments to evaluate (None for all)
             
         Returns:
-            Complete evaluation results
+            Complete evaluation results in clustering-style format
         """
         self.logger.info("Starting full retrieval evaluation")
         
@@ -219,27 +219,72 @@ class RetrievalEvaluator:
         assignment_id = list(submissions_by_assignment.keys())[0] if len(submissions_by_assignment) == 1 else None
         
         overall_results = {
-            'evaluation_type': evaluation_type,
-            'assignment_id': assignment_id,
+            'assignment_id': assignment_id if evaluation_type == 'single_assignment' else 'multi_assignment',
             'evaluation_timestamp': datetime.now().isoformat(),
+            'evaluation_type': evaluation_type,
             'model_info': self.embedder.get_embedding_info(),
             'evaluation_params': {
                 'sample_size': sample_size,
                 'top_k': top_k,
                 'target_assignments': target_assignments or list(submissions_by_assignment.keys())
             },
-            'assignment_results': {},
-            'overall_metrics': {}
+            'retrieval_performance_evaluation': {},
+            'grading_context_examples': [],
+            'assignment_results': {}
         }
         
         # Evaluate each assignment individually
         assignment_metrics = []
+        all_grading_examples = []
+        
         for assignment_id, submissions in submissions_by_assignment.items():
             metrics = self.evaluate_assignment(assignment_id, submissions, sample_size, top_k)
+            
+            # Generate grading context examples
+            self.logger.info(f"Generating grading context examples for {assignment_id}...")
+            grading_examples = self.generate_grading_context_examples(
+                assignment_id, submissions, n_examples=min(3, len(submissions))
+            )
+            
+            # Add assignment_id to each example
+            for example in grading_examples:
+                example['assignment_id'] = assignment_id
+            
+            all_grading_examples.extend(grading_examples)
             overall_results['assignment_results'][assignment_id] = metrics
             assignment_metrics.append(metrics)
         
-        # Note: Cross-assignment evaluation removed since search is now assignment-specific only
+        # Calculate retrieval performance evaluation (similar to clustering's score prediction)
+        if assignment_metrics:
+            retrieval_scores = []
+            predicted_scores = []
+            
+            for example in all_grading_examples:
+                actual_score = example.get('actual_score')
+                predicted_score = example['retrieval_context'].get('predicted_score_from_retrievals')
+                
+                if actual_score is not None and predicted_score is not None:
+                    retrieval_scores.append(actual_score)
+                    predicted_scores.append(predicted_score)
+            
+            if retrieval_scores and predicted_scores:
+                retrieval_scores = np.array(retrieval_scores)
+                predicted_scores = np.array(predicted_scores)
+                
+                mae = np.mean(np.abs(retrieval_scores - predicted_scores))
+                rmse = np.sqrt(np.mean((retrieval_scores - predicted_scores) ** 2))
+                within_band_accuracy = np.mean(np.abs(retrieval_scores - predicted_scores) <= 0.1)
+                
+                overall_results['retrieval_performance_evaluation'] = {
+                    'score_prediction_mae': float(mae),
+                    'score_prediction_rmse': float(rmse),
+                    'within_band_accuracy': float(within_band_accuracy),
+                    'n_predictions': len(retrieval_scores),
+                    'avg_similarity_across_assignments': np.mean([m.get('avg_similarity', 0) for m in assignment_metrics if 'avg_similarity' in m])
+                }
+        
+        # Add grading context examples to results
+        overall_results['grading_context_examples'] = all_grading_examples
         
         # Calculate overall metrics
         if assignment_metrics:
@@ -248,10 +293,10 @@ class RetrievalEvaluator:
                 'same_assignment_rate': np.mean([m['same_assignment_rate'] for m in assignment_metrics]),
                 'avg_similarity': np.mean([m.get('avg_similarity', 0) for m in assignment_metrics if 'avg_similarity' in m]),
                 'assignments_evaluated': len(assignment_metrics),
-                'total_queries_processed': sum([m['sampled_submissions'] for m in assignment_metrics])
+                'total_queries_processed': sum(m['sampled_submissions'] for m in assignment_metrics),
+                'total_submissions': sum(m['total_submissions'] for m in assignment_metrics)
             }
         
-        self.logger.info("Full evaluation completed")
         return overall_results
 
     def _extract_student_id(self, file_name: str) -> str:
@@ -266,65 +311,200 @@ class RetrievalEvaluator:
         return file_name.replace('.zip', '').replace('.java', '')
 
     def print_results(self, results: Dict[str, Any]):
-        """Print evaluation results in a readable format"""
+        """Print evaluation results in a format similar to clustering evaluation"""
         print("\n" + "="*80)
-        print("[EVALUATION RESULTS SUMMARY]")
+        print("[RETRIEVAL EVALUATION RESULTS]")
         print("="*80)
         
-        if results['evaluation_type'] == 'single_assignment':
-            assignment_id = results['assignment_id']
-            metrics = results['assignment_results'][assignment_id]
-            
-            print(f"[ASSIGNMENT] {assignment_id}")
-            print(f"[SAMPLES] {metrics['sampled_submissions']} queries from {metrics['total_submissions']} submissions")
-            print(f"[SELF-RETRIEVAL] {metrics['self_retrieval_rate']:.2%}")
-            print(f"[SAME-ASSIGNMENT] {metrics['same_assignment_rate']:.2%}")
-            print(f"[AVG-SIMILARITY] {metrics.get('avg_similarity', 0):.4f}")
-            
-            # Display detailed query results
-            print(f"\n[DETAILED QUERY RESULTS]")
+        assignment_id = results['assignment_id']
+        print(f"Assignment: {assignment_id}")
+        print(f"Results saved to: retrieval_evaluation_results.json")
+        
+        # Retrieval Performance Evaluation (similar to clustering's score prediction)
+        if 'retrieval_performance_evaluation' in results and results['retrieval_performance_evaluation']:
+            perf_eval = results['retrieval_performance_evaluation']
+            print(f"\n[SCORE PREDICTION FROM RETRIEVALS]")
+            print(f"  MAE: {perf_eval['score_prediction_mae']:.3f}")
+            print(f"  RMSE: {perf_eval['score_prediction_rmse']:.3f}")
+            print(f"  Within-band accuracy: {perf_eval['within_band_accuracy']:.2%}")
+            print(f"  Predictions made: {perf_eval['n_predictions']}")
+            print(f"  Avg similarity: {perf_eval['avg_similarity_across_assignments']:.3f}")
+        
+        # Overall retrieval metrics
+        if 'overall_metrics' in results:
+            overall = results['overall_metrics']
+            print(f"\n[RETRIEVAL PERFORMANCE]")
+            print(f"  Self-retrieval rate: {overall['self_retrieval_rate']:.2%}")
+            print(f"  Same assignment rate: {overall['same_assignment_rate']:.2%}")
+            print(f"  Average similarity: {overall['avg_similarity']:.3f}")
+            print(f"  Total queries processed: {overall['total_queries_processed']}")
+        
+        # Grading Context Examples (similar to clustering examples)
+        if 'grading_context_examples' in results and results['grading_context_examples']:
+            print(f"\n[GRADING CONTEXT EXAMPLES]")
             print("-" * 80)
             
-            for i, query_result in enumerate(metrics['detailed_results'], 1):
-                print(f"\nQuery {i}: {query_result['query_submission']}")
-                print(f"  Student ID: {query_result['query_student_id']}")
-                print(f"  Self-Retrieval: {'✅ YES' if query_result['self_retrieval'] else '❌ NO'} (Rank: {query_result['self_retrieval_rank'] if query_result['self_retrieval_rank'] != -1 else 'Not Found'})")
-                print(f"  Average Similarity: {query_result['avg_similarity']:.4f}")
-                print(f"  Top-{len(query_result['similar_submissions'])} Similar Submissions:")
+            for i, example in enumerate(results['grading_context_examples'][:3], 1):
+                print(f"\nExample {i}: Student {example['student_submission']}")
+                print(f"  Actual Score: {example['actual_score']:.2f}" if example['actual_score'] else "  Actual Score: N/A")
+                print(f"  Actual Feedback: {example['actual_feedback']}")
                 
-                for similar in query_result['similar_submissions']:
-                    self_indicator = " 🎯 [SELF]" if similar['is_self'] else ""
-                    same_assignment = " ✅" if similar['same_assignment'] else " ❌"
-                    grade_info = f" | Grade: {similar['grade']:.2f}" if similar['grade'] is not None else ""
-                    print(f"    {similar['rank']:2d}. {similar['submission_name']}")
-                    print(f"        Student: {similar['student_id']} | Score: {similar['similarity_score']:.4f}{grade_info}{same_assignment}{self_indicator}")
-                    if similar['feedback_snippet']:
-                        print(f"        Feedback: {similar['feedback_snippet']}")
+                retrieval_ctx = example['retrieval_context']
+                top_similar = retrieval_ctx['top_similar_submission']
+                
+                print(f"\n  Top Retrieved Similar Submission:")
+                print(f"    Student: {top_similar['student_name']}")
+                print(f"    Similarity Score: {top_similar['similarity_score']}")
+                print(f"    Actual Score: {top_similar['actual_score']:.2f}" if top_similar['actual_score'] else "    Actual Score: N/A")
+                print(f"    Actual Feedback: {top_similar['actual_feedback']}")
+                
+                if retrieval_ctx['predicted_score_from_retrievals']:
+                    print(f"\n  Model Predictions Based on Retrievals:")
+                    print(f"    Predicted Score: {retrieval_ctx['predicted_score_from_retrievals']:.3f}")
+                    print(f"    Score Variance: {retrieval_ctx['retrieval_statistics']['score_variance']:.4f}")
+                    print(f"    Retrievals with grades: {retrieval_ctx['retrieval_statistics']['n_retrievals_with_grades']}")
+                
+                print(f"\n  LLM Context That Would Be Provided:")
+                context_lines = example['llm_prompt_context'].split('\n')[:8]  # Show first 8 lines
+                for line in context_lines:
+                    print(f"    {line}")
+                if len(example['llm_prompt_context'].split('\n')) > 8:
+                    print("    [... context truncated ...]")
+                
+                if i < len(results['grading_context_examples'][:3]):
+                    print(f"\n{'-' * 40}")
         
-        else:
-            # Multi-assignment results
-            overall_metrics = results['overall_metrics']
-            print(f"[OVERALL] Self-Retrieval Rate: {overall_metrics['self_retrieval_rate']:.2%}")
-            print(f"[OVERALL] Same Assignment Rate: {overall_metrics['same_assignment_rate']:.2%}")
-            print(f"[OVERALL] Average Similarity: {overall_metrics['avg_similarity']:.4f}")
-            print(f"[STATS] Assignments Evaluated: {overall_metrics['assignments_evaluated']}")
-            print(f"[STATS] Total Queries Processed: {overall_metrics['total_queries_processed']}")
-            
-            print(f"\nPer-Assignment Results:")
+        # Per-assignment detailed results for multi-assignment evaluation
+        if results['evaluation_type'] == 'multi_assignment' and len(results['assignment_results']) > 1:
+            print(f"\n[PER-ASSIGNMENT RESULTS]")
             for assignment_id, metrics in results['assignment_results'].items():
-                print(f"  • {assignment_id}:")
-                print(f"    - Self-Retrieval Rate: {metrics['self_retrieval_rate']:.2%}")
-                print(f"    - Same Assignment Rate: {metrics['same_assignment_rate']:.2%}")
-                print(f"    - Average Similarity: {metrics.get('avg_similarity', 0):.4f}")
-                print(f"    - Queries: {metrics['sampled_submissions']}")
-                
-                # Show a few example detailed results for multi-assignment
-                if 'detailed_results' in metrics and metrics['detailed_results']:
-                    print(f"    - Sample Query Results:")
-                    for query_result in metrics['detailed_results'][:2]:  # Show first 2 queries as examples
-                        print(f"      └ {query_result['query_submission']}: Self-Retrieval {'✅' if query_result['self_retrieval'] else '❌'}, Avg Sim: {query_result['avg_similarity']:.3f}")
+                print(f"\n• {assignment_id}:")
+                print(f"  - Self-Retrieval Rate: {metrics['self_retrieval_rate']:.2%}")
+                print(f"  - Same Assignment Rate: {metrics['same_assignment_rate']:.2%}")
+                print(f"  - Average Similarity: {metrics.get('avg_similarity', 0):.3f}")
+                print(f"  - Queries: {metrics['sampled_submissions']}")
         
         print("="*80)
+
+    def generate_grading_context_examples(self, assignment_id: str, submissions: List[Any], 
+                                         n_examples: int = 3) -> List[Dict[str, Any]]:
+        """
+        Generate examples of grading context that would be provided to LLM using FAISS retrieval.
+        
+        Args:
+            assignment_id: Assignment identifier
+            submissions: List of submission objects
+            n_examples: Number of examples to generate
+            
+        Returns:
+            List of grading context examples
+        """
+        if len(submissions) < n_examples:
+            n_examples = len(submissions)
+        
+        # Sample diverse submissions
+        sampled_submissions = random.sample(submissions, n_examples)
+        examples = []
+        
+        for submission in sampled_submissions:
+            try:
+                # Generate embedding for the query submission
+                query_embedding = self.embedder.embed_codebase(submission.code_files)
+                
+                # Search for similar submissions
+                results = self.assignment_manager.search_similar_in_assignment(
+                    assignment_id=assignment_id,
+                    query_embedding=query_embedding,
+                    top_k=5,
+                    embedder=self.embedder
+                )
+                
+                if not results:
+                    continue
+                
+                # Get the top retrieval result (most similar submission)
+                top_result = results[0]
+                top_submission = top_result['submission']
+                
+                # Extract student name
+                student_name = self._extract_student_id(submission.file_name)
+                
+                # Calculate predicted score based on top retrievals
+                retrieval_scores = [r['submission'].score for r in results[:3] if hasattr(r['submission'], 'score') and r['submission'].score is not None]
+                predicted_score = np.mean(retrieval_scores) if retrieval_scores else None
+                
+                # Get sample feedback from top retrievals
+                sample_feedbacks = [r['submission'].feedback for r in results[:3] if hasattr(r['submission'], 'feedback') and r['submission'].feedback]
+                sample_feedback = sample_feedbacks[1] if sample_feedbacks else "No feedback available"  # first one is itslef
+                
+                # Format grading context
+                context = {
+                    'student_submission': student_name,
+                    'actual_score': getattr(submission, 'score', None),
+                    'actual_feedback': getattr(submission, 'feedback', "No feedback available")[:200] + "...",
+                    'retrieval_context': {
+                        'top_similar_submission': {
+                            'student_name': self._extract_student_id(top_submission.file_name),
+                            'similarity_score': round(top_result['similarity_score'], 4),
+                            'actual_score': getattr(top_submission, 'score', None),
+                            'actual_feedback': getattr(top_submission, 'feedback', "No feedback available")[:200] + "...",
+                        },
+                        'predicted_score_from_retrievals': round(predicted_score, 3) if predicted_score else None,
+                        'retrieval_based_feedback_sample': sample_feedback[:200] + "...",
+                        'similarity_scores': [round(r['similarity_score'], 4) for r in results[:3]],
+                        'all_similar_scores': retrieval_scores[:5] if retrieval_scores else [],
+                        'retrieval_statistics': {
+                            'avg_similarity': round(np.mean([r['similarity_score'] for r in results]), 4),
+                            'score_variance': round(np.var(retrieval_scores), 4) if len(retrieval_scores) > 1 else 0,
+                            'n_retrievals_with_grades': len(retrieval_scores)
+                        }
+                    },
+                    'llm_prompt_context': self._format_retrieval_llm_context(results, predicted_score)
+                }
+                
+                examples.append(context)
+                
+            except Exception as e:
+                self.logger.error(f"Error generating context for {submission.file_name}: {e}")
+                continue
+        
+        return examples
+    
+    def _format_retrieval_llm_context(self, results: List[Dict], predicted_score: float = None) -> str:
+        """Format retrieval results as LLM prompt context"""
+        if not results:
+            return "No similar submissions found."
+        
+        context = "**RETRIEVAL-BASED GRADING CONTEXT:**\n\n"
+        
+        # Score prediction from similar submissions
+        if predicted_score:
+            context += f"**Predicted Score Range:** {int(predicted_score*100)}% (±5%)\n"
+            context += f"**Similar Submissions Average:** {int(predicted_score*100)}% of total points\n\n"
+        
+        # Top similar submissions
+        context += f"**Top {min(3, len(results))} Most Similar Submissions:**\n"
+        for i, result in enumerate(results[:3], 1):
+            submission = result['submission']
+            similarity = result['similarity_score']
+            score = getattr(submission, 'score', None)
+            student_name = submission.file_name.split('_')[0] if '_' in submission.file_name else submission.file_name
+            
+            context += f"{i}. Student: {student_name} | Similarity: {similarity:.3f}"
+            if score is not None:
+                context += f" | Score: {int(score*100)}%"
+            context += "\n"
+        
+        # Sample feedback from most similar submission
+        if hasattr(results[0]['submission'], 'feedback') and results[0]['submission'].feedback:
+            context += f"\n**Sample Feedback from Most Similar Submission:**\n"
+            context += f"{results[0]['submission'].feedback[:200]}...\n"
+        
+        context += "\n**Instructions:** Use this context to calibrate your grading and ensure consistency with similar submissions."
+        if predicted_score:
+            context += f" This submission should receive approximately {int(predicted_score*100)}% of the total points based on similar submissions."
+        
+        return context
 
 
 def load_submissions_from_data(data_dir: str, target_assignments: Optional[List[str]] = None) -> Dict[str, List[Any]]:
@@ -455,7 +635,7 @@ def main():
         
         # Load assignment indices
         logger.info(f"Loading assignment indices from {args.indices_path}")
-        assignment_manager = AssignmentFAISSManager(
+        assignment_manager = FAISSManager(
             base_index_path=args.indices_path,
             index_type="flat"
         )

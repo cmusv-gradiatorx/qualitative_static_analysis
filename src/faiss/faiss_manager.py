@@ -1,5 +1,5 @@
 """
-Assignment-Specific FAISS Manager
+FAISS Manager for Assignment-Separated Indices
 
 This module manages separate FAISS indices for each assignment to improve
 efficiency and provide better contextual results. Each assignment gets its
@@ -26,37 +26,154 @@ except ImportError:
 
 from .processor import Submission
 from .embedder import JavaCodeEmbedder  # Backward compatibility alias to OllamaJavaCodeEmbedder
-# FAISSManager import - may not exist, handle gracefully
-try:
-    from .faiss_manager import FAISSManager
-    FAISS_MANAGER_AVAILABLE = True
-except ImportError:
-    # Create a minimal FAISSManager stub if the full version doesn't exist
-    class FAISSManager:
-        def __init__(self, index_type="flat"):
-            self.index_type = index_type
-            self.is_trained = False
-        
-        def build_index(self, submissions, embedder, save_path):
-            # Minimal implementation for compatibility
-            return {
-                'valid_embeddings': len(submissions),
-                'total_submissions': len(submissions),
-                'skipped_submissions': 0
-            }
-        
-        def load_index(self, path):
-            self.is_trained = True
-            return True
-        
-        def search_similar(self, query_embedding, assignment_id, top_k=5, score_threshold=0.0, embedder=None):
-            return []
-    
-    FAISS_MANAGER_AVAILABLE = False
+# Individual assignment managers will be instances of a simple FAISS index class
+# This is kept for backward compatibility in case any code expects it
+FAISS_MANAGER_AVAILABLE = True
 from ..utils.logger import get_logger
 
 
-class AssignmentFAISSManager:
+class SimpleFAISSIndex:
+    """Simple FAISS index for individual assignments"""
+    
+    def __init__(self, index_type: str = "flat"):
+        self.index_type = index_type
+        self.index = None
+        self.submissions = []
+        self.embeddings = None
+        self.is_trained = False
+        self.logger = get_logger(__name__)
+    
+    def build_index(self, submissions: List[Submission], embedder, save_path: str) -> Dict[str, Any]:
+        """Build FAISS index for this assignment"""
+        self.submissions = submissions
+        
+        # Generate embeddings
+        embeddings = []
+        valid_submissions = []
+        
+        for submission in submissions:
+            try:
+                embedding = embedder.embed_codebase(submission.code_files)
+                if embedding is not None and not np.isnan(embedding).any():
+                    embeddings.append(embedding)
+                    valid_submissions.append(submission)
+            except Exception as e:
+                self.logger.warning(f"Failed to embed {submission.file_name}: {e}")
+                continue
+        
+        if not embeddings:
+            raise ValueError("No valid embeddings generated")
+        
+        self.embeddings = np.vstack(embeddings)
+        self.submissions = valid_submissions
+        
+        # Create FAISS index
+        dimension = self.embeddings.shape[1]
+        if self.index_type == "flat":
+            self.index = faiss.IndexFlatIP(dimension)  # Inner product for cosine similarity
+        elif self.index_type == "ivf":
+            nlist = min(100, len(embeddings) // 4)
+            quantizer = faiss.IndexFlatIP(dimension)
+            self.index = faiss.IndexIVFFlat(quantizer, dimension, nlist)
+        elif self.index_type == "hnsw":
+            self.index = faiss.IndexHNSWFlat(dimension, 32)
+        
+        # Normalize embeddings for cosine similarity
+        normalized_embeddings = self.embeddings.copy()
+        faiss.normalize_L2(normalized_embeddings)
+        
+        # Train index if needed
+        if hasattr(self.index, 'train'):
+            self.index.train(normalized_embeddings)
+        
+        # Add embeddings to index
+        self.index.add(normalized_embeddings)
+        self.is_trained = True
+        
+        # Save index and metadata
+        save_path = Path(save_path)
+        faiss.write_index(self.index, str(save_path / "index.faiss"))
+        
+        # Save submission metadata
+        submission_metadata = []
+        for i, submission in enumerate(self.submissions):
+            submission_metadata.append({
+                'index_id': i,
+                'file_name': submission.file_name,
+                'assignment_id': submission.assignment_id,
+                'score': getattr(submission, 'score', None),
+                'feedback': getattr(submission, 'feedback', None)
+            })
+        
+        with open(save_path / "submissions.json", 'w') as f:
+            json.dump(submission_metadata, f, indent=2, default=str)
+        
+        return {
+            'valid_embeddings': len(valid_submissions),
+            'total_submissions': len(submissions),
+            'skipped_submissions': len(submissions) - len(valid_submissions),
+            'index_type': self.index_type,
+            'embedding_dimension': dimension
+        }
+    
+    def load_index(self, path: str) -> bool:
+        """Load FAISS index from disk"""
+        try:
+            index_path = Path(path)
+            self.index = faiss.read_index(str(index_path / "index.faiss"))
+            
+            # Load submission metadata
+            with open(index_path / "submissions.json", 'r') as f:
+                submission_data = json.load(f)
+            
+            # Reconstruct submissions (minimal data for search)
+            self.submissions = []
+            for data in submission_data:
+                # Create minimal submission objects for search results
+                submission = type('Submission', (), {})()
+                submission.file_name = data['file_name']
+                submission.assignment_id = data['assignment_id']
+                submission.score = data.get('score')
+                submission.feedback = data.get('feedback')
+                self.submissions.append(submission)
+            
+            self.is_trained = True
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to load index from {path}: {e}")
+            return False
+    
+    def search_similar(self, query_embedding: np.ndarray, assignment_id: str, 
+                      top_k: int = 5, score_threshold: float = 0.0, 
+                      embedder=None) -> List[Dict[str, Any]]:
+        """Search for similar submissions"""
+        if not self.is_trained:
+            return []
+        
+        # Normalize query embedding
+        query_normalized = query_embedding.copy().reshape(1, -1)
+        faiss.normalize_L2(query_normalized)
+        
+        # Search
+        similarities, indices = self.index.search(query_normalized, min(top_k, len(self.submissions)))
+        
+        results = []
+        for i, (similarity, idx) in enumerate(zip(similarities[0], indices[0])):
+            if idx == -1 or similarity < score_threshold:
+                continue
+                
+            submission = self.submissions[idx]
+            results.append({
+                'submission': submission,
+                'similarity_score': float(similarity),
+                'rank': i + 1
+            })
+        
+        return results
+
+
+class FAISSManager:
     """Manages separate FAISS indices for each assignment"""
     
     def __init__(self, base_index_path: str, index_type: str = "flat"):
@@ -76,7 +193,7 @@ class AssignmentFAISSManager:
         self.index_type = index_type
         
         # Dictionary to store individual FAISS managers for each assignment
-        self.assignment_managers: Dict[str, FAISSManager] = {}
+        self.assignment_managers: Dict[str, Any] = {}
         self.assignment_metadata: Dict[str, Dict] = {}
         
         self.logger.info(f"Assignment FAISS manager initialized with base path: {base_index_path}")
@@ -260,8 +377,8 @@ class AssignmentFAISSManager:
                 assignment_path = self.base_index_path / assignment_id
                 assignment_path.mkdir(parents=True, exist_ok=True)
                 
-                # Create FAISS manager for this assignment
-                assignment_manager = FAISSManager(index_type=self.index_type)
+                # Create individual FAISS index for this assignment
+                assignment_manager = SimpleFAISSIndex(index_type=self.index_type)
                 
                 # Build index for this assignment
                 build_stats = assignment_manager.build_index(
@@ -425,7 +542,7 @@ class AssignmentFAISSManager:
                 try:
                     assignment_path = Path(metadata['index_path'])
                     if assignment_path.exists():
-                        assignment_manager = FAISSManager(index_type=self.index_type)
+                        assignment_manager = SimpleFAISSIndex(index_type=self.index_type)
                         assignment_manager.load_index(str(assignment_path))
                         self.assignment_managers[assignment_id] = assignment_manager
                         loaded_count += 1

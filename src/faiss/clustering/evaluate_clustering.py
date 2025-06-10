@@ -1,4 +1,4 @@
- #!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Evaluate Clustering vs FAISS Performance
@@ -35,7 +35,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from src.faiss.clustering.cluster_manager import ClusteringManager
-from src.faiss.assignment_faiss_manager import AssignmentFAISSManager
+from src.faiss.faiss_manager import FAISSManager
 from src.faiss.processor import MultiFolderProcessor
 from src.faiss.embedder import create_java_embedder
 from src.utils.logger import get_logger, setup_logger
@@ -45,7 +45,7 @@ class ClusteringEvaluator:
     """Evaluate clustering performance and compare with FAISS"""
     
     def __init__(self, assignment_id: str, clustering_manager: ClusteringManager, 
-                 faiss_manager: AssignmentFAISSManager = None, embedder=None):
+                 faiss_manager: FAISSManager = None, embedder=None):
         """
         Initialize evaluator.
         
@@ -61,7 +61,7 @@ class ClusteringEvaluator:
         self.embedder = embedder
         self.logger = get_logger(__name__)
     
-    def evaluate_score_prediction(self, test_split: float = 0.3) -> Dict[str, Any]:
+    def evaluate_score_prediction(self, test_split: float = 0.2) -> Dict[str, Any]:
         """
         Evaluate how well clustering predicts student scores.
         
@@ -78,11 +78,23 @@ class ClusteringEvaluator:
         embeddings = self.clustering_manager.embeddings
         scores = self.clustering_manager.scores
         
-        # Split data
+        # Check score distribution for stratification feasibility
+        unique_scores, counts = np.unique(scores, return_counts=True)
+        min_samples_per_class = np.min(counts)
+        
+        # Split data with stratification only if all classes have at least 2 samples
         indices = np.arange(len(submissions))
-        train_indices, test_indices = train_test_split(
-            indices, test_size=test_split, random_state=42, stratify=scores
-        )
+        if min_samples_per_class >= 2:
+            # Use stratification
+            train_indices, test_indices = train_test_split(
+                indices, test_size=test_split, random_state=42, stratify=scores
+            )
+        else:
+            # No stratification - random split only
+            self.logger.warning(f"Some score classes have only 1 sample (min: {min_samples_per_class}). Using random split without stratification.")
+            train_indices, test_indices = train_test_split(
+                indices, test_size=test_split, random_state=42
+            )
         
         train_embeddings = embeddings[train_indices]
         test_embeddings = embeddings[test_indices]
@@ -130,39 +142,17 @@ class ClusteringEvaluator:
         # Accuracy within score bands (0.1 tolerance)
         within_band_accuracy = np.mean(np.abs(predicted_scores - actual_scores) <= 0.1)
         
-        # Grade classification accuracy (convert scores to letter grades)
-        actual_grades = self._scores_to_grades(actual_scores)
-        predicted_grades = self._scores_to_grades(predicted_scores)
-        grade_accuracy = accuracy_score(actual_grades, predicted_grades)
-        
         return {
             'mae': float(mae),
             'rmse': float(rmse),
             'within_band_accuracy': float(within_band_accuracy),
-            'grade_accuracy': float(grade_accuracy),
-            'grade_classification_report': classification_report(actual_grades, predicted_grades, output_dict=True),
             'n_train': len(train_indices),
             'n_test': len(test_indices),
             'test_score_distribution': {
                 str(score): int(count) for score, count in zip(*np.unique(actual_scores, return_counts=True))
-            }
+            },
+            'stratification_used': min_samples_per_class >= 2
         }
-    
-    def _scores_to_grades(self, scores: np.ndarray) -> List[str]:
-        """Convert numeric scores to letter grades"""
-        grades = []
-        for score in scores:
-            if score >= 0.9:
-                grades.append('A')
-            elif score >= 0.8:
-                grades.append('B')
-            elif score >= 0.7:
-                grades.append('C')
-            elif score >= 0.6:
-                grades.append('D')
-            else:
-                grades.append('F')
-        return grades
     
     def evaluate_issue_detection(self) -> Dict[str, Any]:
         """Evaluate how well clustering detects common issues"""
@@ -362,7 +352,7 @@ def main():
     
     try:
         # Load embedder
-        embedder = create_java_embedder(model_name="starcoder2:15b", use_ollama=True)
+        embedder = create_java_embedder(model_name="starCoder2:15b", use_ollama=True)
         
         # Load clustering manager
         clustering_manager = ClusteringManager(args.assignment, embedder)
@@ -382,7 +372,7 @@ def main():
         # Initialize evaluator
         faiss_manager = None
         if args.faiss_indices:
-            faiss_manager = AssignmentFAISSManager(args.faiss_indices)
+            faiss_manager = FAISSManager(args.faiss_indices)
             faiss_manager.load_assignment_indices()
         
         evaluator = ClusteringEvaluator(args.assignment, clustering_manager, faiss_manager, embedder)
@@ -428,7 +418,6 @@ def main():
         print(f"  MAE: {score_eval['mae']:.3f}")
         print(f"  RMSE: {score_eval['rmse']:.3f}")
         print(f"  Within-band accuracy: {score_eval['within_band_accuracy']:.2%}")
-        print(f"  Grade accuracy: {score_eval['grade_accuracy']:.2%}")
         
         print(f"\n[ISSUE DETECTION]")
         print(f"  Issue clusters: {issue_eval['total_issue_clusters']}")

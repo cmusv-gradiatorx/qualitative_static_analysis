@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.faiss.processor import MultiFolderProcessor, TaskFolderProcessor
 from src.faiss.embedder import create_java_embedder
-from src.faiss.assignment_faiss_manager import AssignmentFAISSManager
+from src.faiss.faiss_manager import FAISSManager
 from src.utils.logger import get_logger, setup_logger
 
 
@@ -65,22 +65,8 @@ def parse_arguments():
     parser.add_argument(
         "--model-name",
         type=str,
-        default="starcoder2:3b",
-        help="Ollama model name for Java code embeddings (e.g., starcoder2:3b, qwen2.5-coder:7b)"
-    )
-    
-    parser.add_argument(
-        "--use-ollama",
-        action="store_true",
-        default=True,
-        help="Use Ollama API for embeddings (default: True)"
-    )
-    
-    parser.add_argument(
-        "--ollama-url",
-        type=str,
-        default=None,
-        help="Ollama base URL (loads from OLLAMA_BASE_URL env var if not specified)"
+        default="starCoder2:15b",
+        help="Ollama model name for Java code embeddings (e.g., starCoder2:3b, qwen2.5-coder:7b)"
     )
     
     parser.add_argument(
@@ -200,17 +186,14 @@ def main():
     if not validate_requirements():
         sys.exit(1)
     
-    # Load Ollama URL from environment if not provided
-    ollama_base_url = args.ollama_url
-    if ollama_base_url is None:
-        ollama_base_url = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
+    # Get Ollama URL from environment
+    ollama_base_url = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
     
     # Test Ollama connection
-    if args.use_ollama:
-        logger.info(f"Testing Ollama connection at {ollama_base_url}")
-        if not test_ollama_connection(ollama_base_url, args.model_name):
-            logger.error("Ollama connection failed. Please check your setup.")
-            sys.exit(1)
+    logger.info(f"Testing Ollama connection at {ollama_base_url}")
+    if not test_ollama_connection(ollama_base_url, args.model_name):
+        logger.error("Ollama connection failed. Please check your setup.")
+        sys.exit(1)
     
     # Validate data directory
     if not Path(args.data_dir).exists():
@@ -252,8 +235,7 @@ def main():
         logger.info(f"Initializing Java code embedder with Ollama model: {args.model_name}")
         embedder = create_java_embedder(
             model_name=args.model_name,
-            use_ollama=args.use_ollama,
-            ollama_base_url=ollama_base_url,
+            use_ollama=True,
             max_length=args.max_length
         )
         
@@ -261,7 +243,7 @@ def main():
         
         # Initialize assignment FAISS manager
         logger.info(f"Initializing Assignment FAISS manager")
-        assignment_manager = AssignmentFAISSManager(
+        assignment_manager = FAISSManager(
             base_index_path=args.output_path,
             index_type=args.index_type
         )
@@ -298,7 +280,7 @@ def main():
             'assignments_built': list(build_stats.keys()),
             'build_type': 'assignment_specific_java_ollama',
             'model_name': args.model_name,
-            'ollama_base_url': ollama_base_url,
+            'ollama_base_url': os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434'),
             'max_length': args.max_length
         }
         
@@ -317,7 +299,7 @@ def main():
         print(f"[TOTAL] Total Java submissions indexed: {total_indexed}")
         
         print(f"[MODEL] Model: {args.model_name}")
-        print(f"[URL] Ollama URL: {ollama_base_url}")
+        print(f"[URL] Ollama URL: {os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')}")
         print(f"[DIM] Embedding dimension: {embedder.get_embedding_info()['embedding_dim']}")
         print(f"[TYPE] Index type: {args.index_type}")
         print(f"[LENGTH] Max sequence length: {args.max_length}")
@@ -333,15 +315,16 @@ def main():
         print("  # Build indices with grade mapping:")
         print(f"  python src/faiss/build_assignment_indices.py --with-grades --grade-mapping-dir {args.grade_mapping_dir}")
         print("  # Search within specific assignment:")
-        print(f"  from src.faiss.assignment_faiss_manager import AssignmentFAISSManager")
+        print(f"  from src.faiss.faiss_manager import FAISSManager")
         print(f"  from src.faiss.embedder import create_java_embedder")
-        print(f"  manager = AssignmentFAISSManager('{args.output_path}')")
+        print(f"  manager = FAISSManager('{args.output_path}')")
         print("  manager.load_assignment_indices()")
         print(f"  embedder = create_java_embedder(model_name='{args.model_name}')")
         print("  results = manager.search_similar_in_assignment('assignment_id', query_embedding)")
         print("  # Results will include grade and feedback if loaded with --with-grades")
         print("\n  # Evaluate retrieval with grades:")
-        print(f"  python src/faiss/evaluate_retrieval.py --assignment {args.assignment or 'task4_GildedRoseKata'} --with-grades")
+        assignment_example = args.assignments[0] if args.assignments else 'task4_GildedRoseKata'
+        print(f"  python src/faiss/evaluate_retrieval.py --assignment {assignment_example} --with-grades")
         
         print(f"\n[EVAL] Quick Start Evaluation:")
         print(f"  python evaluate_embedder_performance.py --model-name {args.model_name}")
