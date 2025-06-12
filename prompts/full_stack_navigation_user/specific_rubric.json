@@ -1,0 +1,22 @@
+[
+  {
+    "criterion_name": "NavigateFromHomePage > NavigatesToFriendListPage",
+    "max_points": 0.5,
+    "specific_prompt": "Evaluate if the user can navigate from the Home Page (`index.html`) to the Friend List Page (`friends.html`) when the application is serving the pages.\n\n**Key aspects to verify (when pages are served by the app server):**\n1. Does `index.html` contain a functional link/button (e.g., 'Friend List') intended to navigate to `friends.html`?\n2. Does clicking this link/button successfully load `friends.html`?\n3. Is the navigation implemented using a relative path in the `href` attribute (e.g., `href=\"./friends.html\"`)?\n\n**Assessment Guidelines:**\n- **Complete (0.5 points)**: Navigation from Home Page to Friend List Page works correctly as described above when pages are served by the application.\n- **Incomplete (0 points)**: Navigation fails. The link/button may be missing, non-functional, incorrectly linked, or the target page does not load correctly when served."
+  },
+  {
+    "criterion_name": "NavigateFromHomePage > NavigatesToChatRoomPage",
+    "max_points": 0.5,
+    "specific_prompt": "Evaluate if the user can navigate from the Home Page (`index.html`) to the Chat Room Page (`chat.html`) when the application is serving the pages.\n\n**Key aspects to verify (when pages are served by the app server):**\n1. Does `index.html` contain a functional link/button (e.g., 'Chat') intended to navigate to `chat.html`?\n2. Does clicking this link/button successfully load `chat.html`?\n3. Is the navigation implemented using a relative path in the `href` attribute (e.g., `href=\"./chat.html\"`)?\n\n**Assessment Guidelines:**\n- **Complete (0.5 points)**: Navigation from Home Page to Chat Room Page works correctly as described above when pages are served by the application.\n- **Incomplete (0 points)**: Navigation fails. The link/button may be missing, non-functional, incorrectly linked, or the target page does not load correctly when served."
+  },
+  {
+    "criterion_name": "NavigateFromHomePage > NavigatesToAuthenticationPage",
+    "max_points": 0.5,
+    "specific_prompt": "Evaluate if the user can navigate from the Home Page (`index.html`) to the Authentication Page (`auth.html`) when the application is serving the pages.\n\n**Key aspects to verify (when pages are served by the app server):**\n1. Does `index.html` contain a functional link/button (e.g., 'Login') intended to navigate to `auth.html`?\n2. Does clicking this link/button successfully load `auth.html`?\n3. Is the navigation implemented using a relative path in the `href` attribute (e.g., `href=\"./auth.html\"`)?\n\n**Assessment Guidelines:**\n- **Complete (0.5 points)**: Navigation from Home Page to Authentication Page works correctly as described above when pages are served by the application.\n- **Incomplete (0 points)**: Navigation fails. The link/button may be missing, non-functional, incorrectly linked, or the target page does not load correctly when served."
+  },
+  {
+    "criterion_name": "NavigateToHomePage",
+    "max_points": 0.5,
+    "specific_prompt": "Evaluate if the user can navigate back to the Home Page (`index.html`) from other pages (`auth.html`, `friends.html`, `chat.html`) when the application is serving the pages.\n\n**Key aspects to verify (when pages are served by the app server):**\n1. Do `auth.html`, `friends.html`, and `chat.html` each contain a functional link/button (e.g., 'Home') intended to navigate to `index.html`?\n2. Does clicking these links/buttons successfully load `index.html` from each respective page?\n3. Is the navigation implemented using a relative path in the `href` attribute (e.g., `href=\"./index.html\"`)?\n\n**Assessment Guidelines:**\n- **Complete (0.5 points)**: Navigation from `auth.html`, `friends.html`, AND `chat.html` back to the Home Page works correctly as described above when pages are served. All three return paths must work.\n- **Incomplete (0 points)**: Navigation back to the Home Page fails from one or more of the specified pages. Links/buttons may be missing, non-functional, incorrectly linked, or `index.html` does not load correctly when served."
+  }
+]
