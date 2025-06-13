@@ -80,6 +80,35 @@ class LLMProvider(ABC):
         """
         pass
     
+    @abstractmethod
+    def supports_multimodal(self) -> bool:
+        """
+        Check if this provider supports multimodal content (images/PDFs).
+        
+        Returns:
+            True if multimodal content is supported, False otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def generate_response_with_attachments(self, prompt: str, attachment_paths: list, **kwargs) -> str:
+        """
+        Generate a response from the LLM for the given prompt with image/PDF attachments.
+        
+        Args:
+            prompt: The input prompt for the LLM
+            attachment_paths: List of paths to image/PDF files to include
+            **kwargs: Additional provider-specific parameters
+            
+        Returns:
+            The generated response as a string
+            
+        Raises:
+            NotImplementedError: If multimodal is not supported by this provider
+            Exception: If the LLM request fails
+        """
+        pass
+    
     def __str__(self) -> str:
         """String representation of the provider."""
         return f"{self.__class__.__name__}(model={self.model})"

@@ -24,6 +24,8 @@ from ..prompts.prompt_manager import PromptManager
 from ..repomix.processor import RepomixProcessor
 from ..semgrep.analyzer import SemgrepAnalyzer
 from ..utils.logger import get_logger
+from .output_manager import OutputManager
+from .report_processor import ReportProcessor
 
 
 class AutoGrader:
@@ -55,6 +57,11 @@ class AutoGrader:
         # Initialize components
         self.llm_provider = self._initialize_llm_provider()
         self.prompt_manager = PromptManager(settings.get_prompts_dir())
+        self.output_manager = OutputManager(settings.output_folder, self.llm_provider, self.prompt_manager)
+        
+        # Initialize report processor for PDF/image submissions
+        self.report_processor = ReportProcessor()
+        
         self.repomix_processor = RepomixProcessor(
             max_tokens=settings.max_tokens,
             use_compression=settings.use_compression,
@@ -131,6 +138,7 @@ class AutoGrader:
     def _process_single_assignment(self, zip_path: Path) -> Dict[str, Any]:
         """
         Process a single assignment ZIP file with parallel rubric evaluation.
+        Supports both code and report submissions with multimodal LLM support.
         
         Args:
             zip_path: Path to the ZIP file
@@ -143,20 +151,33 @@ class AutoGrader:
         """
         self.logger.info(f"Processing assignment: {zip_path.name}")
         
+        # Get submission type from project configuration
+        submission_is = self.project_config.get('submission_is', 'code')
+        prompt_has_img_pdf = self.project_config.get('prompt_has_img_pdf', False)
+        
+        self.logger.info(f"Submission type: {submission_is}")
+        self.logger.info(f"Prompt has attachments: {prompt_has_img_pdf}")
+        
         # Create temporary directory for this assignment
         with tempfile.TemporaryDirectory() as temp_dir_str:
             temp_dir = Path(temp_dir_str)
             
             try:
-                # Step 1: Process codebase with repomix
-                self.logger.info("Step 1: Processing codebase with repomix")
-                repomix_result = self.repomix_processor.process_codebase(zip_path, temp_dir)
-                
-                # Log processing results
-                self.logger.info(f"Repomix processing complete:")
-                self.logger.info(f"  - Token count: {repomix_result['token_count']}")
-                self.logger.info(f"  - Compressed: {repomix_result['compressed']}")
-                self.logger.info(f"  - Within limit: {repomix_result['within_limit']}")
+                # Step 1: Process submission based on type
+                if submission_is == 'report':
+                    self.logger.info("Step 1: Processing report submission")
+                    processing_result = self.report_processor.process_report_submission(zip_path, temp_dir)
+                    content_for_evaluation = f"Report files: {', '.join([f.name for f in processing_result.get('report_files', [])])}"
+                else:
+                    self.logger.info("Step 1: Processing codebase with repomix")
+                    processing_result = self.repomix_processor.process_codebase(zip_path, temp_dir)
+                    content_for_evaluation = processing_result['content']
+                    
+                    # Log processing results for code submissions
+                    self.logger.info(f"Repomix processing complete:")
+                    self.logger.info(f"  - Token count: {processing_result['token_count']}")
+                    self.logger.info(f"  - Compressed: {processing_result['compressed']}")
+                    self.logger.info(f"  - Within limit: {processing_result['within_limit']}")
                 
                 # Step 2: Load prompt components
                 self.logger.info("Step 2: Loading prompt components")
@@ -165,81 +186,154 @@ class AutoGrader:
                 general_rubric = self.prompt_manager.load_general_rubric()
                 specific_rubrics = self.prompt_manager.load_specific_rubric()
                 
-                # Step 3: Divide rubrics for parallel processing
+                # Step 3: Check for multimodal support if needed
+                attachment_files = []
+                if prompt_has_img_pdf or submission_is == 'report':
+                    if not self.llm_provider.supports_multimodal():
+                        raise Exception(f"LLM provider {self.llm_provider} does not support multimodal content (images/PDFs). Please use Gemini or OpenAI for image/PDF processing.")
+                    
+                    if prompt_has_img_pdf:
+                        # Get attachment files from prompts directory
+                        attachment_files.extend(self.prompt_manager.get_attachment_files())
+                        self.logger.info(f"Found {len(attachment_files)} prompt attachment files")
+                    
+                    if submission_is == 'report':
+                        # Add report files to attachments
+                        attachment_files.extend(processing_result.get('report_files', []))
+                        self.logger.info(f"Added {len(processing_result.get('report_files', []))} report files")
+                
+                # Step 4: Divide rubrics for parallel processing
                 max_parallel = self.project_config.get('max_parallel_llm', 2)
                 rubric_groups = self.prompt_manager.divide_rubrics_for_parallel_processing(
                     specific_rubrics, max_parallel
                 )
                 
-                self.logger.info(f"Step 3: Divided {len(specific_rubrics)} rubrics into {len(rubric_groups)} groups for parallel processing")
+                self.logger.info(f"Step 4: Divided {len(specific_rubrics)} rubrics into {len(rubric_groups)} groups for parallel processing")
                 
-                # Step 4: Process rubric groups in parallel
-                self.logger.info("Step 4: Processing rubric evaluations in parallel")
-                rubric_evaluations = self._process_rubrics_parallel(
-                    assignment_details, instructions, repomix_result['content'], 
-                    general_rubric, rubric_groups, zip_path.name
+                # Step 5: Process rubric groups in parallel
+                self.logger.info("Step 5: Processing rubric evaluations in parallel")
+                rubric_evaluations = self._process_rubrics_parallel_multimodal(
+                    assignment_details, instructions, content_for_evaluation, 
+                    general_rubric, rubric_groups, zip_path.name, attachment_files
                 )
                 
-                # Step 5: Run semgrep analysis if enabled
-                semgrep_analysis = ""
+                # Step 6: Run semgrep analysis if enabled (only for code submissions)
                 semgrep_result = None
                 semgrep_raw_output = ""
                 semgrep_structured = None
                 
-                if self.semgrep_analyzer:
-                    self.logger.info("Step 5: Running Semgrep static analysis")
+                if self.semgrep_analyzer and submission_is == 'code':
+                    self.logger.info("Step 6: Running Semgrep static analysis")
                     semgrep_result = self.semgrep_analyzer.analyze_codebase(zip_path, temp_dir)
                     
                     # Save raw semgrep output
                     semgrep_raw_output = self._format_semgrep_raw_output(semgrep_result)
                     
                     if semgrep_result['success']:
-                        self.logger.info("Step 5a: Generating static analysis evaluation")
+                        self.logger.info("Step 6a: Generating static analysis evaluation")
                         semgrep_structured = self._process_semgrep_analysis(
                             semgrep_result, zip_path.name
                         )
                     else:
                         self.logger.warning(f"Semgrep analysis failed: {semgrep_result.get('error', 'Unknown error')}")
+                elif submission_is == 'report':
+                    self.logger.info("Skipping semgrep analysis for report submission")
                 
-                # Step 6: Save results
-                self.logger.info("Step 6: Saving evaluation results")
-                output_files = self._save_evaluation_results(
+                # Step 7: Save results using new output manager
+                self.logger.info("Step 7: Saving evaluation results in three-folder structure")
+                output_files = self.output_manager.save_evaluation_results(
                     zip_path, rubric_evaluations, semgrep_structured, 
-                    repomix_result, semgrep_result, semgrep_raw_output
+                    processing_result, semgrep_result, semgrep_raw_output,
+                    assignment_details, instructions, specific_rubrics
                 )
                 
                 return {
                     'filename': zip_path.name,
                     'output_files': output_files,
                     'success': True,
-                    'token_count': repomix_result['token_count'],
-                    'compressed': repomix_result['compressed'],
-                    'project_name': repomix_result['project_name'],
+                    'submission_type': submission_is,
+                    'project_name': processing_result.get('project_name', zip_path.stem),
                     'rubric_groups_processed': len(rubric_groups),
                     'total_rubrics': len(specific_rubrics),
-                    'semgrep_enabled': self.semgrep_analyzer is not None,
+                    'semgrep_enabled': self.semgrep_analyzer is not None and submission_is == 'code',
                     'semgrep_findings': semgrep_result['findings_count'] if semgrep_result else 0,
-                    'filtered_files_count': repomix_result.get('filtered_files_count', 0)
+                    'attachment_files_count': len(attachment_files),
+                    'multimodal_used': len(attachment_files) > 0,
+                    **processing_result  # Include all processing result data
                 }
                 
             except Exception as e:
                 self.logger.error(f"Failed to process {zip_path.name}: {str(e)}")
                 raise
     
-    def _process_rubrics_parallel(self, assignment_details: str, instructions: str,
-                                 codebase_content: str, general_rubric: str,
-                                 rubric_groups: List[List[Dict[str, Any]]], 
-                                 assignment_name: str) -> List[Dict[str, Any]]:
+    # def _process_rubrics_parallel(self, assignment_details: str, instructions: str,
+    #                              codebase_content: str, general_rubric: str,
+    #                              rubric_groups: List[List[Dict[str, Any]]], 
+    #                              assignment_name: str) -> List[Dict[str, Any]]:
+    #     """
+    #     Process rubric groups in parallel using ThreadPoolExecutor with structured output.
+        
+    #     Args:
+    #         assignment_details: Assignment specification content
+    #         instructions: General evaluation instructions
+    #         codebase_content: Processed codebase content
+    #         general_rubric: General rubric instructions
+    #         rubric_groups: List of rubric groups to process
+    #         assignment_name: Name of the assignment for logging
+            
+    #     Returns:
+    #         List of structured evaluation results for each group
+    #     """
+    #     structured_evaluations = []
+        
+    #     # Use ThreadPoolExecutor for parallel processing
+    #     with concurrent.futures.ThreadPoolExecutor(max_workers=len(rubric_groups)) as executor:
+    #         # Submit all tasks
+    #         future_to_group = {}
+    #         for i, rubric_group in enumerate(rubric_groups):
+    #             future = executor.submit(
+    #                 self._evaluate_rubric_group_structured,
+    #                 assignment_details, instructions, codebase_content,
+    #                 general_rubric, rubric_group, i + 1, assignment_name
+    #             )
+    #             future_to_group[future] = (rubric_group, i + 1)
+            
+    #         # Collect results
+    #         for future in concurrent.futures.as_completed(future_to_group):
+    #             rubric_group, group_num = future_to_group[future]
+    #             try:
+    #                 structured_result = future.result()
+    #                 structured_evaluations.append(structured_result)
+    #             except Exception as e:
+    #                 self.logger.error(f"Failed to evaluate rubric group {group_num}: {str(e)}")
+    #                 # Create error evaluation
+    #                 criteria_names = [criterion['criterion_name'] for criterion in rubric_group]
+    #                 error_evaluation = {
+    #                     'group_number': group_num,
+    #                     'criteria_names': criteria_names,
+    #                     'success': False,
+    #                     'error': str(e),
+    #                     'evaluations': []
+    #                 }
+    #                 structured_evaluations.append(error_evaluation)
+        
+    #     return structured_evaluations
+    
+    def _process_rubrics_parallel_multimodal(self, assignment_details: str, instructions: str,
+                                           content: str, general_rubric: str,
+                                           rubric_groups: List[List[Dict[str, Any]]], 
+                                           assignment_name: str, attachment_files: List[Path]) -> List[Dict[str, Any]]:
         """
-        Process rubric groups in parallel using ThreadPoolExecutor with structured output.
+        Process rubric groups in parallel with multimodal support (images/PDFs).
         
         Args:
             assignment_details: Assignment specification content
             instructions: General evaluation instructions
-            codebase_content: Processed codebase content
+            content: Processed content (codebase or report description)
             general_rubric: General rubric instructions
             rubric_groups: List of rubric groups to process
             assignment_name: Name of the assignment for logging
+            attachment_files: List of attachment file paths
             
         Returns:
             List of structured evaluation results for each group
@@ -252,9 +346,9 @@ class AutoGrader:
             future_to_group = {}
             for i, rubric_group in enumerate(rubric_groups):
                 future = executor.submit(
-                    self._evaluate_rubric_group_structured,
-                    assignment_details, instructions, codebase_content,
-                    general_rubric, rubric_group, i + 1, assignment_name
+                    self._evaluate_rubric_group_multimodal,
+                    assignment_details, instructions, content,
+                    general_rubric, rubric_group, i + 1, assignment_name, attachment_files
                 )
                 future_to_group[future] = (rubric_group, i + 1)
             
@@ -278,6 +372,89 @@ class AutoGrader:
                     structured_evaluations.append(error_evaluation)
         
         return structured_evaluations
+    
+    def _evaluate_rubric_group_multimodal(self, assignment_details: str, instructions: str,
+                                        content: str, general_rubric: str,
+                                        rubric_group: List[Dict[str, Any]], group_num: int,
+                                        assignment_name: str, attachment_files: List[Path]) -> Dict[str, Any]:
+        """
+        Evaluate a single group of rubric criteria with multimodal support.
+        
+        Args:
+            assignment_details: Assignment specification content
+            instructions: General evaluation instructions
+            content: Content to evaluate (codebase or report description)
+            general_rubric: General rubric instructions
+            rubric_group: Group of rubric criteria to evaluate
+            group_num: Group number for logging
+            assignment_name: Assignment name for file naming
+            attachment_files: List of attachment file paths
+            
+        Returns:
+            Structured evaluation result for this group
+        """
+        criteria_names = [criterion['criterion_name'] for criterion in rubric_group]
+        self.logger.info(f"Processing rubric group {group_num}: {', '.join(criteria_names)}")
+        
+        # Create prompt for this group
+        prompt = self.prompt_manager.create_rubric_evaluation_prompt(
+            assignment_details, instructions, content,
+            general_rubric, rubric_group
+        )
+        
+        # Save prompt to extra_logs
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        prompt_filename = f"{assignment_name}_group_{group_num}_prompt_{timestamp}.txt"
+        prompt_path = self.extra_logs_dir / prompt_filename
+        prompt_path.write_text(prompt, encoding='utf-8')
+        self.logger.info(f"Saved prompt for group {group_num} to: {prompt_path}")
+        
+        # Log prompt stats and attachment info
+        prompt_tokens = self.llm_provider.count_tokens(prompt)
+        self.logger.info(f"Group {group_num} prompt token count: {prompt_tokens}")
+        self.logger.info(f"Group {group_num} attachment files: {len(attachment_files)}")
+        
+        # Check if prompt exceeds model limits
+        max_model_tokens = self.llm_provider.get_max_tokens()
+        if prompt_tokens > max_model_tokens:
+            self.logger.warning(
+                f"Group {group_num} prompt ({prompt_tokens} tokens) exceeds model limit "
+                f"({max_model_tokens} tokens). Results may be truncated."
+            )
+        
+        # Generate evaluation with or without attachments
+        if attachment_files:
+            # Use multimodal generation
+            attachment_paths = [str(f) for f in attachment_files]
+            raw_response = self.llm_provider.generate_response_with_attachments(
+                prompt, attachment_paths
+            )
+            self.logger.info(f"Completed multimodal evaluation for group {group_num} with {len(attachment_files)} attachments")
+        else:
+            # Use regular text generation
+            raw_response = self.llm_provider.generate_response(prompt)
+            self.logger.info(f"Completed text evaluation for group {group_num}")
+        
+        # Save raw response to extra_logs
+        response_filename = f"{assignment_name}_group_{group_num}_response_{timestamp}.txt"
+        response_path = self.extra_logs_dir / response_filename
+        response_path.write_text(raw_response, encoding='utf-8')
+        self.logger.info(f"Saved raw response for group {group_num} to: {response_path}")
+        
+        # Parse structured response
+        structured_data = self._parse_llm_response(raw_response, group_num, criteria_names)
+        
+        return {
+            'group_number': group_num,
+            'criteria_names': criteria_names,
+            'success': structured_data['success'],
+            'evaluations': structured_data['evaluations'],
+            'raw_response': raw_response,
+            'prompt_tokens': prompt_tokens,
+            'attachment_files_count': len(attachment_files),
+            'multimodal_used': len(attachment_files) > 0,
+            'error': structured_data.get('error')
+        }
     
     def _evaluate_rubric_group_structured(self, assignment_details: str, instructions: str,
                                         codebase_content: str, general_rubric: str,
@@ -397,6 +574,13 @@ class AutoGrader:
                     # Ensure numeric fields are numbers
                     eval_item['max_points'] = float(eval_item['max_points'])
                     eval_item['score_obtained'] = float(eval_item['score_obtained'])
+                    
+                    # Handle optional issues field
+                    if 'issues' not in eval_item:
+                        eval_item['issues'] = []
+                    elif not isinstance(eval_item['issues'], list):
+                        eval_item['issues'] = []
+                    
                     validated_evaluations.append(eval_item)
             
             self.logger.info(f"Successfully parsed {len(validated_evaluations)} evaluations for group {group_num}")
@@ -418,7 +602,8 @@ class AutoGrader:
                     'score_obtained': 0.0,
                     'feedback_positive': 'Unable to parse LLM response',
                     'feedback_negative': f'Error parsing evaluation: {str(e)}',
-                    'score_justification': 'Score unavailable due to parsing error'
+                    'score_justification': 'Score unavailable due to parsing error',
+                    'issues': ['LLM response parsing error']
                 })
             
             return {
@@ -467,224 +652,9 @@ class AutoGrader:
                 output += f"- **Message:** {message}\n\n"
         
         return output
+
     
-    def _save_evaluation_results(self, zip_path: Path, rubric_evaluations: List[Dict[str, Any]],
-                               semgrep_structured: Optional[Dict[str, Any]], repomix_result: Dict[str, Any],
-                               semgrep_result: Optional[Dict[str, Any]],
-                               semgrep_raw_output: str) -> Dict[str, Path]:
-        """
-        Save all evaluation results to the output directory with structured format.
-        
-        Args:
-            zip_path: Original ZIP file path
-            rubric_evaluations: List of structured rubric evaluation results
-            semgrep_structured: Structured semgrep analysis evaluation
-            repomix_result: Repomix processing results
-            semgrep_result: Semgrep analysis results
-            semgrep_raw_output: Raw semgrep output
-            
-        Returns:
-            Dictionary of output file paths
-        """
-        # Create output filenames based on input filename
-        base_name = zip_path.stem
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Main evaluation report (Markdown format)
-        main_output_filename = f"{base_name}_evaluation_{timestamp}.md"
-        main_output_path = self.settings.output_folder / main_output_filename
-        
-        # Semgrep raw output file
-        semgrep_output_filename = f"{base_name}_semgrep_raw_{timestamp}.txt"
-        semgrep_output_path = self.settings.output_folder / semgrep_output_filename
-        
-        # Create comprehensive evaluation report
-        main_report = self._create_comprehensive_evaluation_report(
-            zip_path, rubric_evaluations, semgrep_structured, repomix_result, semgrep_result
-        )
-        
-        # Save main report
-        main_output_path.write_text(main_report, encoding='utf-8')
-        self.logger.info(f"Main evaluation saved to: {main_output_path}")
-        
-        # Save semgrep raw output if analysis was performed
-        output_files = {'main_evaluation': main_output_path}
-        
-        if semgrep_raw_output and self.semgrep_analyzer:
-            semgrep_output_path.write_text(semgrep_raw_output, encoding='utf-8')
-            self.logger.info(f"Semgrep raw output saved to: {semgrep_output_path}")
-            output_files['semgrep_raw'] = semgrep_output_path
-        
-        return output_files
-    
-    def _create_comprehensive_evaluation_report(self, zip_path: Path, rubric_evaluations: List[Dict[str, Any]],
-                                              semgrep_structured: Optional[Dict[str, Any]], repomix_result: Dict[str, Any],
-                                              semgrep_result: Optional[Dict[str, Any]]) -> str:
-        """
-        Create a comprehensive structured evaluation report with calculated scores.
-        
-        Args:
-            zip_path: Original ZIP file path
-            rubric_evaluations: List of structured rubric evaluation results
-            semgrep_structured: Structured semgrep analysis evaluation
-            repomix_result: Repomix processing results
-            semgrep_result: Semgrep analysis results
-            
-        Returns:
-            Formatted comprehensive evaluation report
-        """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Calculate processing statistics
-        successful_groups = [eval for eval in rubric_evaluations if eval.get('success', True)]
-        failed_groups = [eval for eval in rubric_evaluations if not eval.get('success', True)]
-        
-        processing_stats = f"""## Processing Statistics
 
-- **Original Token Count:** {repomix_result['token_count']:,}
-- **Compression Applied:** {'Yes' if repomix_result['compressed'] else 'No'}
-- **Within Token Limit:** {'Yes' if repomix_result['within_limit'] else 'No'}
-- **Token Limit (LLM):** {self.settings.max_tokens:,}
-- **Max File Size (Filtering):** {self.project_config.get('max_file_size', 'unlimited')} bytes
-- **Files Filtered by Project Config:** {repomix_result.get('filtered_files_count', 0)}
-- **Parallel LLM Runs:** {len(rubric_evaluations)}
-- **Successful Groups:** {len(successful_groups)}
-- **Failed Groups:** {len(failed_groups)}
-- **Max Parallel Configured:** {self.project_config.get('max_parallel_llm', 2)}"""
-        
-        # Add semgrep statistics if enabled
-        if self.semgrep_analyzer and semgrep_result:
-            processing_stats += f"""
-- **Static Analysis:** {'Enabled' if self.semgrep_analyzer else 'Disabled'}
-- **Static Analysis Findings:** {semgrep_result['findings_count']}
-- **Static Analysis Status:** {'Success' if semgrep_result['success'] else 'Failed'}"""
-        
-        # Collect all evaluations for scoring
-        all_evaluations = []
-        total_score = 0.0
-        total_max_score = 0.0
-        
-        # Process rubric evaluations
-        rubric_section = "# Detailed Rubric Evaluations\n\n"
-        
-        for group_data in rubric_evaluations:
-            group_num = group_data.get('group_number', 'Unknown')
-            criteria_names = group_data.get('criteria_names', [])
-            success = group_data.get('success', True)
-            
-            rubric_section += f"## Group {group_num}: {', '.join(criteria_names)}\n\n"
-            
-            if success and group_data.get('evaluations'):
-                for evaluation in group_data['evaluations']:
-                    criterion_name = evaluation.get('criterion_name', 'Unknown')
-                    max_points = evaluation.get('max_points', 0.0)
-                    score_obtained = evaluation.get('score_obtained', 0.0)
-                    feedback_positive = evaluation.get('feedback_positive', 'No feedback available')
-                    feedback_negative = evaluation.get('feedback_negative', 'No feedback available')
-                    score_justification = evaluation.get('score_justification', 'No justification available')
-                    
-                    # Add to totals
-                    total_max_score += max_points
-                    total_score += score_obtained
-                    all_evaluations.append(evaluation)
-                    
-                    rubric_section += f"""### {criterion_name} - Score: {score_obtained:.1f}/{max_points:.1f}
-
-**What was done correctly:**
-{feedback_positive}
-
-**Major flaws identified:**
-{feedback_negative}
-
-**Score justification:**
-{score_justification}
-
----
-
-"""
-            else:
-                error_msg = group_data.get('error', 'Unknown error')
-                rubric_section += f"**Error processing this group:** {error_msg}\n\n---\n\n"
-        
-        # Process semgrep evaluation if available
-        semgrep_section = ""
-        if semgrep_structured and semgrep_structured.get('success') and semgrep_structured.get('evaluations'):
-            semgrep_section = "\n# Static Code Analysis Evaluation\n\n"
-            
-            for evaluation in semgrep_structured['evaluations']:
-                criterion_name = evaluation.get('criterion_name', 'Static Code Analysis')
-                max_points = evaluation.get('max_points', 10.0)
-                score_obtained = evaluation.get('score_obtained', 0.0)
-                feedback_positive = evaluation.get('feedback_positive', 'No feedback available')
-                feedback_negative = evaluation.get('feedback_negative', 'No feedback available')
-                score_justification = evaluation.get('score_justification', 'No justification available')
-                
-                # Add to totals
-                total_max_score += max_points
-                total_score += score_obtained
-                all_evaluations.append(evaluation)
-                
-                semgrep_section += f"""## {criterion_name} - Score: {score_obtained:.1f}/{max_points:.1f}
-
-**What was done correctly:**
-{feedback_positive}
-
-**Major flaws identified:**
-{feedback_negative}
-
-**Score justification:**
-{score_justification}
-
-"""
-        elif self.semgrep_analyzer:
-            semgrep_section = "\n# Static Code Analysis Evaluation\n\n**Static analysis was enabled but evaluation failed or was not performed.**\n"
-        
-        # Calculate final score percentage
-        final_percentage = (total_score / total_max_score * 100) if total_max_score > 0 else 0.0
-        
-        # Create score summary
-        score_summary = f"""# Final Score Summary
-
-| Component | Score Obtained | Max Score | Percentage |
-|-----------|---------------|-----------|------------|
-| **Rubric Criteria** | **{sum(e['score_obtained'] for e in all_evaluations if e['criterion_name'] != 'Static Code Analysis'):.1f}** | **{sum(e['max_points'] for e in all_evaluations if e['criterion_name'] != 'Static Code Analysis'):.1f}** | **{(sum(e['score_obtained'] for e in all_evaluations if e['criterion_name'] != 'Static Code Analysis') / sum(e['max_points'] for e in all_evaluations if e['criterion_name'] != 'Static Code Analysis') * 100) if sum(e['max_points'] for e in all_evaluations if e['criterion_name'] != 'Static Code Analysis') > 0 else 0:.1f}%** |"""
-        
-        if any(e['criterion_name'] == 'Static Code Analysis' for e in all_evaluations):
-            static_score = next((e['score_obtained'] for e in all_evaluations if e['criterion_name'] == 'Static Code Analysis'), 0)
-            static_max = next((e['max_points'] for e in all_evaluations if e['criterion_name'] == 'Static Code Analysis'), 10)
-            static_pct = (static_score / static_max * 100) if static_max > 0 else 0
-            score_summary += f"""
-| **Static Analysis** | **{static_score:.1f}** | **{static_max:.1f}** | **{static_pct:.1f}%** |"""
-        
-        score_summary += f"""
-| **TOTAL** | **{total_score:.1f}** | **{total_max_score:.1f}** | **{final_percentage:.1f}%** |
-
-## Grade: {final_percentage:.1f}% ({total_score:.1f}/{total_max_score:.1f} points)
-"""
-        
-        # Build the complete report
-        report = f"""# AutoGrader Comprehensive Evaluation Report
-
-**Assignment:** {zip_path.name}
-**Project Name:** {repomix_result['project_name']}
-**Evaluation Date:** {timestamp}
-**LLM Provider:** {self.llm_provider}
-**Project Configuration:** {self.settings.project_assignment}
-
-{processing_stats}
-
-{score_summary}
-
-{rubric_section}
-
-{semgrep_section}
-
----
-*Report generated by Gradiator*
-*For detailed prompts and responses, see the extra_logs directory*
-"""
-        
-        return report
     
     def process_assignments(self) -> List[Dict[str, Any]]:
         """

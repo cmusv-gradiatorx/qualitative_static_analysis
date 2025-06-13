@@ -10,6 +10,6 @@
     "enable_semgrep_analysis": false,
     "semgrep_rules_file": "config/semgrep_rules.yaml",
     "semgrep_timeout": 300,
-    "prompt_has_img_pdf": false,
-    "submission_is": "code"
+    "prompt_has_img_pdf": true,
+    "submission_is": "report"
 } 

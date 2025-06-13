@@ -37,6 +37,11 @@ class PromptManager:
         self.general_rubric_file = self.prompts_dir / "general_rubric.txt"
         self.specific_rubric_file = self.prompts_dir / "specific_rubric.json"
         self.static_instructions_file = self.prompts_dir / "static_instructions.txt"
+        self.final_prompt_file = self.prompts_dir / "final_prompt.txt"
+        
+        # Attachments directory for images/PDFs
+        self.attachments_dir = self.prompts_dir / "attachments"
+        self.attachments_dir.mkdir(parents=True, exist_ok=True)
         
         # Validate that required files exist
         self._validate_content_files()
@@ -214,7 +219,7 @@ class PromptManager:
         Args:
             assignment_details: Assignment specification content
             instructions: General evaluation instructions
-            codebase_content: Processed codebase content
+            content: Processed content
             general_rubric: General rubric instructions
             rubric_group: Group of rubric criteria to evaluate
             
@@ -244,7 +249,7 @@ class PromptManager:
 **EVALUATION INSTRUCTIONS:**
 {instructions}
 
-**CODEBASE TO EVALUATE:**
+**CONTENT TO EVALUATE:**
 {codebase_content}
 
 **GENERAL RUBRIC INSTRUCTIONS:**
@@ -268,7 +273,8 @@ You must respond with a valid JSON object containing evaluations for each criter
       "score_obtained": numerical_score_obtained,
       "feedback_positive": "Detailed feedback on what was done correctly and well. Better to provide exact details",
       "feedback_negative": "Detailed feedback on major flaws and issues that caused point deductions. Better to provide exact details",
-      "score_justification": "Clear explanation of why this specific score was assigned based on the rubric"
+      "score_justification": "Clear explanation of why this specific score was assigned based on the rubric",
+      "issues": ["List of specific issues identified for clustering analysis"]
     }}
   ]
 }}
@@ -326,7 +332,8 @@ You must respond with a valid JSON object for the static analysis evaluation. Th
       "score_obtained": numerical_score_obtained,
       "feedback_positive": "Detailed feedback on what was done correctly and good practices identified",
       "feedback_negative": "Detailed feedback on major flaws found by static analysis that caused point deductions",
-      "score_justification": "Clear explanation of why this specific score was assigned out of 10 based on the static analysis findings"
+      "score_justification": "Clear explanation of why this specific score was assigned out of 10 based on the static analysis findings",
+      "issues": ["List of specific static analysis issues identified"]
     }}
   ]
 }}
@@ -395,4 +402,92 @@ Detailed findings:
             'general_rubric.txt': self.general_rubric_file.exists(),
             'specific_rubric.json': self.specific_rubric_file.exists(),
             'static_instructions.txt': self.static_instructions_file.exists()
-        } 
+        }
+    
+    def load_final_prompt(self) -> str:
+        """
+        Load final prompt content for user-friendly output generation.
+        
+        Returns:
+            Final prompt content as string
+            
+        Raises:
+            FileNotFoundError: If final prompt file doesn't exist
+        """
+        try:
+            if not self.final_prompt_file.exists():
+                # Return a default final prompt if file doesn't exist
+                return """You are an expert educational assistant. You have been provided with a comprehensive technical evaluation report for a graduate-level software engineering assignment.
+
+Your task is to create a user-friendly, student-oriented summary of this evaluation that:
+
+1. Provides clear, actionable feedback
+2. Highlights both strengths and areas for improvement
+3. Uses encouraging and constructive language
+4. Focuses on learning outcomes and next steps
+5. Is well-organized and easy to read
+
+Please provide a friendly, supportive evaluation summary that will help the student understand their performance and how to improve. DO not make it super long or complicated, should be helpful and to the point."""
+            
+            return self.final_prompt_file.read_text(encoding='utf-8')
+        except Exception as e:
+            raise Exception(f"Error reading final prompt: {str(e)}")
+    
+    def get_attachment_files(self) -> List[Path]:
+        """
+        Get list of attachment files from the attachments directory.
+        
+        Returns:
+            List of paths to attachment files (images/PDFs)
+        """
+        if not self.attachments_dir.exists():
+            return []
+        
+        # Supported file extensions
+        supported_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf'}
+        
+        attachment_files = []
+        for file_path in self.attachments_dir.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
+                attachment_files.append(file_path)
+        
+        return sorted(attachment_files)
+    
+    def create_friendly_output_prompt(self, comprehensive_report: str, assignment_details: str, 
+                                    instructions: str, rubrics: List[Dict[str, Any]]) -> str:
+        """
+        Create a prompt for generating user-friendly output from comprehensive evaluation.
+        
+        Args:
+            comprehensive_report: The detailed technical evaluation report
+            assignment_details: Assignment specification content
+            instructions: General evaluation instructions
+            rubrics: List of rubric criteria
+            
+        Returns:
+            Complete prompt for friendly output generation
+        """
+        final_prompt_content = self.load_final_prompt()
+        
+        # Format rubrics information
+        rubrics_summary = []
+        for rubric in rubrics:
+            rubrics_summary.append(f"- {rubric['criterion_name']} (Max: {rubric['max_points']} points)")
+        
+        rubrics_text = "\n".join(rubrics_summary)
+        
+        return f"""{final_prompt_content}
+
+**ASSIGNMENT DETAILS:**
+{assignment_details}
+
+**EVALUATION INSTRUCTIONS:**
+{instructions}
+
+**RUBRIC CRITERIA:**
+{rubrics_text}
+
+**COMPREHENSIVE TECHNICAL EVALUATION:**
+{comprehensive_report}
+
+Please create a friendly, student-oriented summary that will help them understand their performance and how to improve. Focus on being constructive, encouraging, and actionable in your feedback.""" 
