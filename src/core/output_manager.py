@@ -349,13 +349,7 @@ class OutputManager:
                 "failed_groups": len([e for e in rubric_evaluations if not e.get('success', True)])
             },
             "evaluations": all_evaluations,
-            "issues": all_issues,
-            "raw_data": {
-                "rubric_evaluations": rubric_evaluations,
-                "semgrep_structured": semgrep_structured,
-                "processing_result": processing_result,
-                "semgrep_result": semgrep_result
-            }
+            "issues": all_issues
         }
         
         # Add processing-specific stats
