@@ -1,0 +1,42 @@
+Goals
+Setup your application to serve static pages.
+Learn how to run your application locally on your codespace (or desktop). 
+Tasks
+Implement the new user stories indicated on your project board's backlog for the corresponding week. The user stories allow the pages you drafted to be properly served by your application, allowing you to navigate back and forth from one to the other. 
+US: NavigateToHomePageLinks to an external site. specification
+US: NavigateFromHomePageLinks to an external site. specification
+Detailed Instructions
+Review the placeholder/starter HTML files in the client/pages subfolder of your repo. Revise your drafted pages in the trials/ui-eg subfolder to comply with them. Have you included the right HTML elements in your own pages? If not, correct them. 
+Make sure to save a copy of the original placeholder/starter HTML files in the client/pages folder because they contain information about what the required elements are in each file. You do not want to lose these starter files. You can move them to a subfolder client/pages-bk that you can later zap when they are no longer needed.
+Copy your finalized HTML pages from trials/ui-eg to the proper place in the repo: the client/pages folder.
+You will need some minor changes to your repo to make these pages work with your application. 
+Create an .env file that includes the variables PORT, ENV, STAGE, LOCAL_HOST, and CODESPACE_HOST defined as follows. Your repo has a template you can use for this file: copy its contents to the freshly created .env file and tweak as follows.  
+     PORT=8080
+     LOCAL_HOST=http://localhost
+     CODESPACE_HOST=https://yourCodespaceName-1234.app.github.dev
+Links to an external site.
+     ENV=LOCAL or ENV=CODESPACE (depending on how you are using VS Code to access your project repo)
+     STAGE=EARLY
+In your HTML pages, for now, set the href attribute for navigating to different pages using relative paths, like this:
+href="./auth.html"
+href="./chat.html"
+href="./friends.html"
+href="./index.html"
+Test the pages by rendering them directly from on the browser, and see that you can navigate back and forth by clicking on the buttons. If you are using VS Code on your laptop, then you can use the right-click > "View in Browser" command to render them on Chrome. If you are using a codespace, use the Live Server extension and open the repo directory using this extension (right-click > "Open in Live Server"). Navigate to the client/pages subfolder in which the pages are located, and click on the page you want to render. Test the navigation buttons sure you can access the pages from one another.  
+Build and run the app server for these stories to work with your skeletal app. 
+To build and start the development app server for a specific page without building the whole application:
+% npm run serve:<page-name>
+where <page-name> is either home, auth, friends, or chat.
+To build and start the app server for for the whole application:
+% npm run build
+% npm run start
+or
+% npm run watch
+Once the server is running, you will see a green "Open in Browser" button on the bottom right corner of your codespace window. Click on it to go the home page of the application on your default browser (should be Chrome). If this button disappears, you can find the link under the PORTS panel (to the right of the TERMINAL window): the URL is the one corresponding to the port 8080 and process node ./.dist/server/serve. Go to the link and add the path pages/index.html to the end (this is important). 
+Note: If you are not using a codespace, but using VS Code desktop on your laptop, your application's index page will be served at http://localhost:8080/pages/index.html. If you using a codespace, it will be served on your codespace container's localhost:8080, which will be forwarded to an external URL to allow you to access it. 
+Read this note before posting a question on Piazza: Based on what is specified in your .env file, after starting the server, your app simply prints this URL on console for convenience so that you can copy and paste it to your browser or command+click on it to go to the URL of the app easily. If you're using a codespace, CODESPACE_HOST in .env should be set to the URL provided by the codespace used, and then the path pages/index.html added to the end. However, note that changing the URLs in .env does not actually cause your app to be served at these URLs (you do not control this in .env, but your codespace and/or host OS is running your app is). The reason we must add the path pages/index.html to the URL is that the route "/" is not yet defined on the server, so the server doesn't yet know that "/" should redirect to  /pages/index.html. You will fix this soon in upcoming user stories, so stay tuned.
+Navigate to each page and back and make sure the navigation between pages works when the pages are actually served. 
+
+Submission Instructions
+Make sure that each acceptance criterion works as specified in the associated user story. 
+Make sure that each page complies with the corresponding wireframe.

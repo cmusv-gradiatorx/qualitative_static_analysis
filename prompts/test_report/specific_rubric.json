@@ -1,0 +1,7 @@
+[
+  {
+    "criterion_name": "Report Quality",
+    "max_points": 1.0,
+    "specific_prompt": "Assesses the student's ability to define a product's purpose, set measurable goals, write clear user-centric requirements, and effectively limit scope."
+  }
+]

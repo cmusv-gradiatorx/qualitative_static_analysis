@@ -79,7 +79,7 @@ class Settings:
         
         # Assignment-specific settings are loaded dynamically from project config via get_project_config()
         # This includes: max_file_size (for file filtering), enable_semgrep_analysis, semgrep_rules_file, 
-        # semgrep_timeout, max_parallel_llm, ignore_patterns, keep_patterns
+        # semgrep_timeout, max_parallel_llm, ignore_patterns, keep_patterns, prompt_has_img_pdf, submission_is
         
         # Create directories if they don't exist
         self._create_directories()
@@ -147,7 +147,9 @@ class Settings:
             "max_parallel_llm": 2,  # Default value
             "enable_semgrep_analysis": False,  # Default value  
             "semgrep_rules_file": "config/semgrep_rules.yaml",  # Default value
-            "semgrep_timeout": 300  # Default value
+            "semgrep_timeout": 300,  # Default value
+            "prompt_has_img_pdf": False,  # Default value - whether prompts have image/PDF attachments
+            "submission_is": "code"  # Default value - can be "code" or "report"
         }
         
         if project_config_file.exists():

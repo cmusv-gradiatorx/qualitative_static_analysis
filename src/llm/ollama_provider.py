@@ -9,7 +9,7 @@ Author: Auto-generated
 
 import requests
 import json
-from typing import Dict, Any
+from typing import Dict, Any, List
 import tiktoken
 
 from .base import LLMProvider, LLMConfigError, LLMRequestError
@@ -131,4 +131,32 @@ class OllamaProvider(LLMProvider):
     
     def get_max_tokens(self) -> int:
         """Get maximum token limit for the current Ollama model."""
-        return self.MODEL_LIMITS.get(self.model, 8192) 
+        return self.MODEL_LIMITS.get(self.model, 8192)
+    
+    def supports_multimodal(self) -> bool:
+        """
+        Check if this Ollama model supports multimodal content.
+        
+        Returns:
+            False - Most Ollama models do not support multimodal content
+        """
+        return False
+    
+    def generate_response_with_attachments(self, prompt: str, attachment_paths: List[str], **kwargs) -> str:
+        """
+        Generate a response using Ollama with attachments.
+        
+        Note: Most Ollama models do not support multimodal content.
+        
+        Args:
+            prompt: The input prompt
+            attachment_paths: List of paths to files (ignored for Ollama)
+            **kwargs: Additional parameters
+            
+        Returns:
+            Generated response text
+            
+        Raises:
+            LLMRequestError: Always raises since multimodal is not supported
+        """
+        raise LLMRequestError(f"Model {self.model} (Ollama) does not support multimodal content. Please use Gemini or OpenAI for image/PDF processing.") 
