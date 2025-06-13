@@ -13,6 +13,7 @@ import tempfile
 import shutil
 import re
 import json
+import subprocess
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
@@ -398,4 +399,214 @@ class SubmissionProcessor(TaskFolderProcessor):
     
     def extract_submissions(self) -> List[Submission]:
         """Extract submissions - delegates to new method"""
-        return self.extract_all_submissions() 
+        return self.extract_all_submissions()
+
+
+class RepomixProcessor:
+    """
+    Processor that uses repomix to process codebases into a single text file.
+    Handles ZIP file extraction and repomix processing with various configuration options.
+    """
+    
+    def __init__(self, 
+                 max_tokens: int = 128000,
+                 use_compression: bool = True,
+                 remove_comments: bool = False,
+                 ignore_patterns: Optional[List[str]] = None,
+                 keep_patterns: Optional[List[str]] = None,
+                 max_file_size: Optional[int] = None):
+        """
+        Initialize the RepomixProcessor.
+        
+        Args:
+            max_tokens: Maximum token limit for repomix processing
+            use_compression: Whether to use compression in repomix
+            remove_comments: Whether to remove comments in repomix
+            ignore_patterns: List of file/directory patterns to ignore
+            keep_patterns: List of file patterns to keep
+            max_file_size: Maximum file size in bytes for filtering
+        """
+        self.logger = get_logger(__name__)
+        self.max_tokens = max_tokens
+        self.use_compression = use_compression
+        self.remove_comments = remove_comments
+        self.ignore_patterns = ignore_patterns or []
+        self.keep_patterns = keep_patterns or []
+        self.max_file_size = max_file_size
+        
+        # Check if repomix is available
+        self._check_repomix_availability()
+    
+    def _check_repomix_availability(self):
+        """Check if repomix is available via npx."""
+        try:
+            # Use npx to check repomix availability
+            result = subprocess.run(
+                ['npx', 'repomix', '--version'],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            if result.returncode == 0:
+                self.logger.info(f"Repomix available: {result.stdout.strip()}")
+            else:
+                self.logger.warning("Repomix not found, will attempt to install on first use")
+        except Exception as e:
+            self.logger.warning(f"Could not check repomix availability: {str(e)}")
+    
+    def process_codebase(self, zip_path: Path, temp_dir: Path) -> Dict[str, Any]:
+        """
+        Process a codebase ZIP file using repomix.
+        
+        Args:
+            zip_path: Path to the ZIP file containing the codebase
+            temp_dir: Temporary directory for extraction
+            
+        Returns:
+            Dictionary containing processed content and metadata
+        """
+        try:
+            # Extract ZIP file
+            extract_dir = temp_dir / "extracted"
+            extract_dir.mkdir(exist_ok=True)
+            
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+            
+            # Find the main project directory (skip __MACOSX and similar)
+            project_dirs = [d for d in extract_dir.iterdir() 
+                          if d.is_dir() and not d.name.startswith('__')]
+            
+            if not project_dirs:
+                # No subdirectories, use extract_dir directly
+                project_dir = extract_dir
+            elif len(project_dirs) == 1:
+                # Single project directory
+                project_dir = project_dirs[0]
+            else:
+                # Multiple directories, use extract_dir
+                project_dir = extract_dir
+            
+            # Run repomix on the project directory
+            output_file = temp_dir / "repomix_output.txt"
+            repomix_result = self._run_repomix(project_dir, output_file)
+            
+            # Read the processed content
+            if output_file.exists():
+                with open(output_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+            else:
+                raise RuntimeError("Repomix did not generate output file")
+            
+            # Extract project name from ZIP filename
+            project_name = zip_path.stem.split('_')[0] if '_' in zip_path.stem else zip_path.stem
+            
+            return {
+                'content': content,
+                'token_count': repomix_result.get('token_count', 0),
+                'compressed': repomix_result.get('compressed', False),
+                'within_limit': repomix_result.get('within_limit', True),
+                'project_name': project_name,
+                'filtered_files_count': repomix_result.get('filtered_files_count', 0)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Failed to process codebase {zip_path}: {str(e)}")
+            raise
+    
+    def _run_repomix(self, project_dir: Path, output_file: Path) -> Dict[str, Any]:
+        """
+        Run repomix on the project directory.
+        
+        Args:
+            project_dir: Directory containing the project files
+            output_file: Output file for repomix
+            
+        Returns:
+            Dictionary containing repomix execution metadata
+        """
+        try:
+            # Build repomix command
+            cmd = ['npx', 'repomix', str(project_dir), '--output', str(output_file)]
+            
+            # Add compression options
+            if self.use_compression:
+                cmd.append('--compress')
+                cmd.append('--remove-empty-lines')  # Additional compression
+            
+            if self.remove_comments:
+                cmd.append('--remove-comments')
+            
+            # Add token counting with encoding
+            cmd.extend(['--token-count-encoding', 'cl100k_base'])
+            
+            # Add ignore patterns
+            if self.ignore_patterns:
+                ignore_patterns_str = ','.join(self.ignore_patterns)
+                cmd.extend(['--ignore', ignore_patterns_str])
+            
+            # Add keep patterns (include patterns)
+            if self.keep_patterns:
+                include_patterns_str = ','.join(self.keep_patterns)
+                cmd.extend(['--include', include_patterns_str])
+            
+            # Run repomix
+            self.logger.debug(f"Running repomix command: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            
+            if result.returncode != 0:
+                self.logger.error(f"Repomix failed: {result.stderr}")
+                raise RuntimeError(f"Repomix execution failed: {result.stderr}")
+            
+            # Parse repomix output for metadata
+            metadata = self._parse_repomix_output(result.stdout)
+            
+            return metadata
+            
+        except subprocess.TimeoutExpired:
+            self.logger.error("Repomix execution timed out")
+            raise RuntimeError("Repomix execution timed out")
+        except Exception as e:
+            self.logger.error(f"Error running repomix: {str(e)}")
+            raise
+    
+    def _parse_repomix_output(self, stdout: str) -> Dict[str, Any]:
+        """
+        Parse repomix stdout to extract metadata.
+        
+        Args:
+            stdout: Standard output from repomix command
+            
+        Returns:
+            Dictionary containing parsed metadata
+        """
+        metadata = {
+            'token_count': 0,
+            'compressed': False,
+            'within_limit': True,
+            'filtered_files_count': 0
+        }
+        
+        try:
+            # Look for token count in output
+            token_match = re.search(r'Token count:\s*(\d+)', stdout)
+            if token_match:
+                metadata['token_count'] = int(token_match.group(1))
+            
+            # Look for compression indicator
+            if 'compressed' in stdout.lower():
+                metadata['compressed'] = True
+            
+            # Look for limit exceeded indicator
+            if 'limit exceeded' in stdout.lower() or 'truncated' in stdout.lower():
+                metadata['within_limit'] = False
+            
+            # Look for file count
+            file_match = re.search(r'(\d+)\s+files?\s+processed', stdout)
+            if file_match:
+                metadata['filtered_files_count'] = int(file_match.group(1))
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to parse repomix output: {e}")
+        
+        return metadata 

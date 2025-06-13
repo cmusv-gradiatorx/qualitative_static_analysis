@@ -114,3 +114,9 @@ faiss_performance_evaluation*
 
 src/faiss/assignment_indices/*
 src/faiss/clustering/models/*
+clustering_results/*
+
+.cache/*
+models/*
+
+cluster_evaluation_results/*

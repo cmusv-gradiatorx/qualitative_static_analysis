@@ -10,13 +10,17 @@ Components:
 - FAISS Manager: Traditional single-index FAISS management
 - Assignment FAISS Manager: Per-assignment FAISS indices for better efficiency
 - Historical Context: Interface for retrieving contextual examples
+- RepomixEmbedder: Embedding generator using repomix processing
+- RepomixClusterManager: Clustering manager for repomix embeddings
 
 Author: Auto-generated
 """
 
 from .embedder import JavaCodeEmbedder, OllamaJavaCodeEmbedder, EmbedderConfig, create_java_embedder
-from .processor import SubmissionProcessor, Submission
+from .processor import SubmissionProcessor, Submission, RepomixProcessor
 from .faiss_manager import FAISSManager
+from .repomix_embedder import RepomixEmbedder
+from .repomix_cluster_manager import RepomixClusterManager
 
 # FAISS Manager is now always available
 FAISS_MANAGER_AVAILABLE = True
@@ -44,6 +48,7 @@ __all__ = [
     'create_java_embedder',
     'SubmissionProcessor',
     'Submission',
+    'RepomixProcessor',
     
     # FAISS management
     'FAISSManager',
@@ -51,6 +56,10 @@ __all__ = [
     # AST analysis
     'ASTJavaAnalyzer',
     'AST_ANALYZER_AVAILABLE',
+    
+    # Repomix
+    'RepomixEmbedder',
+    'RepomixClusterManager'
 ]
 
 # FAISSManager is already in __all__, no need to add it again
