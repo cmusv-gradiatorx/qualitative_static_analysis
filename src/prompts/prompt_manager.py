@@ -212,7 +212,8 @@ class PromptManager:
     
     def create_rubric_evaluation_prompt(self, assignment_details: str, instructions: str,
                                       codebase_content: str, general_rubric: str,
-                                      rubric_group: List[Dict[str, Any]]) -> str:
+                                      rubric_group: List[Dict[str, Any]], 
+                                      submission_type: str = "code") -> str:
         """
         Create a prompt for evaluating a specific group of rubric criteria.
         
@@ -288,7 +289,7 @@ You must respond with a valid JSON object containing evaluations for each criter
 
 Evaluate ONLY the criteria specified above and provide your assessment in the exact JSON format requested.
 
-IMPORTANT NOTE: As mentioned before, the analysis(feedback_positive, feedback_negative, score_justification) should be thorough and detailed. While giving the feedback make sure to provide all (ideally all) instances(like the exact code artifacts: class, variables, functions, tests, etc.) you can on which you are giving the feedback.
+IMPORTANT NOTE: As mentioned before, the analysis(feedback_positive, feedback_negative, score_justification) should be thorough and detailed.{" While giving the feedback make sure to provide all (ideally all) instances(like the exact code artifacts: class, variables, functions, tests, etc.) you can on which you are giving the feedback." if submission_type == "code" else ""}
 """
     
     def create_static_analysis_prompt(self, semgrep_results: Dict[str, Any]) -> str:

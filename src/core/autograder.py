@@ -214,7 +214,7 @@ class AutoGrader:
                 self.logger.info("Step 5: Processing rubric evaluations in parallel")
                 rubric_evaluations = self._process_rubrics_parallel_multimodal(
                     assignment_details, instructions, content_for_evaluation, 
-                    general_rubric, rubric_groups, zip_path.name, attachment_files
+                    general_rubric, rubric_groups, zip_path.name, attachment_files, submission_is
                 )
                 
                 # Step 6: Run semgrep analysis if enabled (only for code submissions)
@@ -266,63 +266,13 @@ class AutoGrader:
                 self.logger.error(f"Failed to process {zip_path.name}: {str(e)}")
                 raise
     
-    # def _process_rubrics_parallel(self, assignment_details: str, instructions: str,
-    #                              codebase_content: str, general_rubric: str,
-    #                              rubric_groups: List[List[Dict[str, Any]]], 
-    #                              assignment_name: str) -> List[Dict[str, Any]]:
-    #     """
-    #     Process rubric groups in parallel using ThreadPoolExecutor with structured output.
-        
-    #     Args:
-    #         assignment_details: Assignment specification content
-    #         instructions: General evaluation instructions
-    #         codebase_content: Processed codebase content
-    #         general_rubric: General rubric instructions
-    #         rubric_groups: List of rubric groups to process
-    #         assignment_name: Name of the assignment for logging
-            
-    #     Returns:
-    #         List of structured evaluation results for each group
-    #     """
-    #     structured_evaluations = []
-        
-    #     # Use ThreadPoolExecutor for parallel processing
-    #     with concurrent.futures.ThreadPoolExecutor(max_workers=len(rubric_groups)) as executor:
-    #         # Submit all tasks
-    #         future_to_group = {}
-    #         for i, rubric_group in enumerate(rubric_groups):
-    #             future = executor.submit(
-    #                 self._evaluate_rubric_group_structured,
-    #                 assignment_details, instructions, codebase_content,
-    #                 general_rubric, rubric_group, i + 1, assignment_name
-    #             )
-    #             future_to_group[future] = (rubric_group, i + 1)
-            
-    #         # Collect results
-    #         for future in concurrent.futures.as_completed(future_to_group):
-    #             rubric_group, group_num = future_to_group[future]
-    #             try:
-    #                 structured_result = future.result()
-    #                 structured_evaluations.append(structured_result)
-    #             except Exception as e:
-    #                 self.logger.error(f"Failed to evaluate rubric group {group_num}: {str(e)}")
-    #                 # Create error evaluation
-    #                 criteria_names = [criterion['criterion_name'] for criterion in rubric_group]
-    #                 error_evaluation = {
-    #                     'group_number': group_num,
-    #                     'criteria_names': criteria_names,
-    #                     'success': False,
-    #                     'error': str(e),
-    #                     'evaluations': []
-    #                 }
-    #                 structured_evaluations.append(error_evaluation)
-        
-    #     return structured_evaluations
+    
     
     def _process_rubrics_parallel_multimodal(self, assignment_details: str, instructions: str,
                                            content: str, general_rubric: str,
                                            rubric_groups: List[List[Dict[str, Any]]], 
-                                           assignment_name: str, attachment_files: List[Path]) -> List[Dict[str, Any]]:
+                                           assignment_name: str, attachment_files: List[Path],
+                                           submission_type: str = "code") -> List[Dict[str, Any]]:
         """
         Process rubric groups in parallel with multimodal support (images/PDFs).
         
@@ -348,7 +298,7 @@ class AutoGrader:
                 future = executor.submit(
                     self._evaluate_rubric_group_multimodal,
                     assignment_details, instructions, content,
-                    general_rubric, rubric_group, i + 1, assignment_name, attachment_files
+                    general_rubric, rubric_group, i + 1, assignment_name, attachment_files, submission_type
                 )
                 future_to_group[future] = (rubric_group, i + 1)
             
@@ -376,7 +326,8 @@ class AutoGrader:
     def _evaluate_rubric_group_multimodal(self, assignment_details: str, instructions: str,
                                         content: str, general_rubric: str,
                                         rubric_group: List[Dict[str, Any]], group_num: int,
-                                        assignment_name: str, attachment_files: List[Path]) -> Dict[str, Any]:
+                                        assignment_name: str, attachment_files: List[Path],
+                                        submission_type: str = "code") -> Dict[str, Any]:
         """
         Evaluate a single group of rubric criteria with multimodal support.
         
@@ -399,7 +350,7 @@ class AutoGrader:
         # Create prompt for this group
         prompt = self.prompt_manager.create_rubric_evaluation_prompt(
             assignment_details, instructions, content,
-            general_rubric, rubric_group
+            general_rubric, rubric_group, submission_type
         )
         
         # Save prompt to extra_logs
@@ -456,75 +407,7 @@ class AutoGrader:
             'error': structured_data.get('error')
         }
     
-    def _evaluate_rubric_group_structured(self, assignment_details: str, instructions: str,
-                                        codebase_content: str, general_rubric: str,
-                                        rubric_group: List[Dict[str, Any]], group_num: int,
-                                        assignment_name: str) -> Dict[str, Any]:
-        """
-        Evaluate a single group of rubric criteria with structured output and detailed logging.
-        
-        Args:
-            assignment_details: Assignment specification content
-            instructions: General evaluation instructions
-            codebase_content: Processed codebase content
-            general_rubric: General rubric instructions
-            rubric_group: Group of rubric criteria to evaluate
-            group_num: Group number for logging
-            assignment_name: Assignment name for file naming
-            
-        Returns:
-            Structured evaluation result for this group
-        """
-        criteria_names = [criterion['criterion_name'] for criterion in rubric_group]
-        self.logger.info(f"Processing rubric group {group_num}: {', '.join(criteria_names)}")
-        
-        # Create prompt for this group
-        prompt = self.prompt_manager.create_rubric_evaluation_prompt(
-            assignment_details, instructions, codebase_content,
-            general_rubric, rubric_group
-        )
-        
-        # Save prompt to extra_logs
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        prompt_filename = f"{assignment_name}_group_{group_num}_prompt_{timestamp}.txt"
-        prompt_path = self.extra_logs_dir / prompt_filename
-        prompt_path.write_text(prompt, encoding='utf-8')
-        self.logger.info(f"Saved prompt for group {group_num} to: {prompt_path}")
-        
-        # Log prompt stats
-        prompt_tokens = self.llm_provider.count_tokens(prompt)
-        self.logger.info(f"Group {group_num} prompt token count: {prompt_tokens}")
-        
-        # Check if prompt exceeds model limits
-        max_model_tokens = self.llm_provider.get_max_tokens()
-        if prompt_tokens > max_model_tokens:
-            self.logger.warning(
-                f"Group {group_num} prompt ({prompt_tokens} tokens) exceeds model limit "
-                f"({max_model_tokens} tokens). Results may be truncated."
-            )
-        
-        # Generate evaluation
-        raw_response = self.llm_provider.generate_response(prompt)
-        self.logger.info(f"Completed evaluation for group {group_num}")
-        
-        # Save raw response to extra_logs
-        response_filename = f"{assignment_name}_group_{group_num}_response_{timestamp}.txt"
-        response_path = self.extra_logs_dir / response_filename
-        response_path.write_text(raw_response, encoding='utf-8')
-        self.logger.info(f"Saved raw response for group {group_num} to: {response_path}")
-        
-        # Parse structured response
-        structured_data = self._parse_llm_response(raw_response, group_num, criteria_names)
-        
-        return {
-            'group_number': group_num,
-            'criteria_names': criteria_names,
-            'success': structured_data['success'],
-            'evaluations': structured_data['evaluations'],
-            'raw_response': raw_response,
-            'prompt_tokens': prompt_tokens,
-            'error': structured_data.get('error')
-        }
+    
     
     def _parse_llm_response(self, raw_response: str, group_num: int, 
                            expected_criteria: List[str]) -> Dict[str, Any]:

@@ -2,7 +2,7 @@
 
 An autograder for graduate-level software engineering assignments that uses Large Language Models (LLMs) for qualitative code analysis. The system processes entire codebases using repomix and provides comprehensive feedback based on customizable rubrics.
 
-## 🆕 Version 2.0 - Enhanced Features
+## 🆕Features
 
 - **Parallel LLM Processing**: Process multiple rubric criteria simultaneously for faster evaluation
 - **Structured Rubric System**: JSON-based rubric definitions with detailed scoring criteria
