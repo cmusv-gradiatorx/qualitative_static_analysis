@@ -26,7 +26,6 @@ from .repomix_cluster_manager import RepomixClusterManager
 FAISS_MANAGER_AVAILABLE = True
 
 try:
-    from .historical_context import HistoricalContextProvider
     HISTORICAL_CONTEXT_AVAILABLE = True
 except ImportError:
     HistoricalContextProvider = None

@@ -13,12 +13,14 @@ from enum import Enum
 from .base_embedder import BaseEmbedder, EmbedderConfig
 from .java_embedder import JavaEmbedder
 from .repomix_embedder import RepomixEmbedder, RepomixConfig
+from .issue_embedder import IssueEmbedder, IssueConfig
 
 
 class EmbedderType(Enum):
     """Enumeration of available embedder types"""
     JAVA = "java"
     REPOMIX = "repomix"
+    ISSUES = "issues"
 
 
 class EmbedderFactory:
@@ -33,12 +35,14 @@ class EmbedderFactory:
     _EMBEDDER_REGISTRY: Dict[EmbedderType, Type[BaseEmbedder]] = {
         EmbedderType.JAVA: JavaEmbedder,
         EmbedderType.REPOMIX: RepomixEmbedder,
+        EmbedderType.ISSUES: IssueEmbedder,
     }
     
     # Default configurations for each embedder type
     _DEFAULT_CONFIGS: Dict[EmbedderType, Type[EmbedderConfig]] = {
         EmbedderType.JAVA: EmbedderConfig,
         EmbedderType.REPOMIX: RepomixConfig,
+        EmbedderType.ISSUES: IssueConfig,
     }
     
     @classmethod
@@ -174,6 +178,42 @@ class EmbedderFactory:
         
         config = RepomixConfig(**config_kwargs)
         return RepomixEmbedder(config)
+    
+    @classmethod
+    def create_issue_embedder(cls,
+                            sentence_model: str = "all-MiniLM-L6-v2",
+                            issues_file: Optional[str] = None,
+                            max_issues_per_student: int = 50,
+                            use_issue_clustering: bool = True,
+                            similarity_threshold: float = 0.8,
+                            **kwargs) -> IssueEmbedder:
+        """
+        Create an Issue embedder with specific configuration.
+        
+        Args:
+            sentence_model: Sentence transformer model name
+            issues_file: Path to JSON file containing student issues
+            max_issues_per_student: Maximum issues per student to consider
+            use_issue_clustering: Whether to cluster similar issues
+            similarity_threshold: Threshold for issue similarity
+            **kwargs: Additional configuration parameters
+            
+        Returns:
+            Configured Issue embedder
+        """
+        config_kwargs = {
+            'sentence_model': sentence_model,
+            'max_issues_per_student': max_issues_per_student,
+            'use_issue_clustering': use_issue_clustering,
+            'similarity_threshold': similarity_threshold,
+            **kwargs
+        }
+        
+        if issues_file:
+            config_kwargs['issues_file'] = issues_file
+        
+        config = IssueConfig(**config_kwargs)
+        return IssueEmbedder(config)
     
     @classmethod
     def get_available_embedders(cls) -> list[str]:

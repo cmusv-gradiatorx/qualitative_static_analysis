@@ -169,21 +169,30 @@ class ClusterManager:
             # Java embedder format
             submission_data = {
                 'student_name': submission.student_name,
-                'java_files': submission.java_files
+                'java_files': getattr(submission, 'java_files', {})
             }
         elif embedder_class_name == 'RepomixEmbedder':
             # Repomix embedder format
             submission_data = {
                 'student_name': submission.student_name,
-                'zip_path': str(submission.zip_path)
+                'zip_path': str(getattr(submission, 'zip_path', ''))
+            }
+        elif embedder_class_name == 'IssueEmbedder':
+            # Issue embedder format - only needs student name
+            submission_data = {
+                'student_name': submission.student_name
             }
         else:
-            # Fallback: try both formats, prefer zip_path for unknown embedders
+            # Fallback: try to include available attributes
             submission_data = {
-                'student_name': submission.student_name,
-                'zip_path': str(submission.zip_path),
-                'java_files': submission.java_files
+                'student_name': submission.student_name
             }
+            
+            # Add optional attributes if they exist
+            if hasattr(submission, 'zip_path'):
+                submission_data['zip_path'] = str(submission.zip_path)
+            if hasattr(submission, 'java_files'):
+                submission_data['java_files'] = submission.java_files
         
         # Generate embedding
         embedding = self.embedder.embed_submission(submission_data)
@@ -372,21 +381,30 @@ class ClusterManager:
                 # Java embedder format
                 submission_data = {
                     'student_name': submission.student_name,
-                    'java_files': submission.java_files
+                    'java_files': getattr(submission, 'java_files', {})
                 }
             elif embedder_class_name == 'RepomixEmbedder':
                 # Repomix embedder format
                 submission_data = {
                     'student_name': submission.student_name,
-                    'zip_path': str(submission.zip_path)
+                    'zip_path': str(getattr(submission, 'zip_path', ''))
+                }
+            elif embedder_class_name == 'IssueEmbedder':
+                # Issue embedder format - only needs student name
+                submission_data = {
+                    'student_name': submission.student_name
                 }
             else:
-                # Fallback: try both formats, prefer zip_path for unknown embedders
+                # Fallback: try to include available attributes
                 submission_data = {
-                    'student_name': submission.student_name,
-                    'zip_path': str(submission.zip_path),
-                    'java_files': submission.java_files
+                    'student_name': submission.student_name
                 }
+                
+                # Add optional attributes if they exist
+                if hasattr(submission, 'zip_path'):
+                    submission_data['zip_path'] = str(submission.zip_path)
+                if hasattr(submission, 'java_files'):
+                    submission_data['java_files'] = submission.java_files
             
             submission_data_list.append(submission_data)
         

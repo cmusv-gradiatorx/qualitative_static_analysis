@@ -24,6 +24,8 @@ from ..prompts.prompt_manager import PromptManager
 from ..repomix.processor import RepomixProcessor
 from ..semgrep.analyzer import SemgrepAnalyzer
 from ..utils.logger import get_logger
+from .output_manager import OutputManager
+from .report_processor import ReportProcessor
 
 
 class AutoGrader:
@@ -91,64 +93,12 @@ class AutoGrader:
                 self.logger.warning("Continuing without static analysis")
         
         # Initialize FAISS historical context if enabled
-        self.historical_context_provider = None
         faiss_config = settings.get_faiss_config()
-        
-        if faiss_config['enabled'] and FAISS_AVAILABLE:
-            try:
-                self.logger.info("Initializing FAISS historical context system")
-                
-                # Check if FAISS index exists
-                faiss_index_path = Path(faiss_config['index_path'])
-                if faiss_index_path.exists():
-                    # Load existing index
-                    faiss_manager = FAISSManager()
-                    faiss_manager.load_index(str(faiss_index_path))
-                    
-                    # Load embedder with scalers
-                    embedder = HybridCodeEmbedder(
-                        model_name=faiss_config['embedding_model']
-                    )
-                    
-                    scaler_path = faiss_index_path / "scalers.pkl"
-                    if scaler_path.exists():
-                        embedder.load_scalers(str(scaler_path))
-                    
-                    # Create context provider
-                    self.historical_context_provider = HistoricalContextProvider(
-                        faiss_manager, embedder
-                    )
-                    
-                    # Log statistics
-                    stats = faiss_manager.get_statistics()
-                    self.logger.info(f"FAISS historical context initialized:")
-                    self.logger.info(f"  - Index status: {stats.get('status')}")
-                    self.logger.info(f"  - Total submissions: {stats.get('total_submissions', 0)}")
-                    self.logger.info(f"  - Assignments: {stats.get('assignments', [])}")
-                    self.logger.info(f"  - Max examples: {faiss_config['max_examples']}")
-                    self.logger.info(f"  - Similarity threshold: {faiss_config['similarity_threshold']}")
-                    
-                else:
-                    self.logger.warning(f"FAISS index not found at {faiss_index_path}")
-                    self.logger.warning("Historical context will be disabled")
-                    self.logger.info("To build the index, run: python src/faiss/build_index.py")
-                    
-            except Exception as e:
-                self.logger.warning(f"Failed to initialize FAISS historical context: {str(e)}")
-                self.logger.warning("Continuing without historical context")
-                
-        elif faiss_config['enabled'] and not FAISS_AVAILABLE:
-            self.logger.warning("Historical context enabled but FAISS not available")
-            self.logger.warning("Install with: pip install faiss-cpu")
-            
-        elif not faiss_config['enabled']:
-            self.logger.info("Historical context disabled in configuration")
         
         self.logger.info(f"AutoGrader initialized with {self.llm_provider}")
         self.logger.info(f"Project: {settings.project_assignment}")
         self.logger.info(f"Max parallel LLM runs: {self.project_config.get('max_parallel_llm', 2)}")
         self.logger.info(f"Extra logs directory: {self.extra_logs_dir}")
-        self.logger.info(f"Historical context: {'Enabled' if self.historical_context_provider else 'Disabled'}")
         
         # Log project-specific filtering configuration
         ignore_patterns = self.project_config.get('ignore_patterns', [])
@@ -665,7 +615,6 @@ class AutoGrader:
             'project_config': self.project_config,
             'prompts_directory': str(self.settings.get_prompts_dir()),
             'extra_logs_directory': str(self.extra_logs_dir),
-            'historical_context': 'Enabled' if self.historical_context_provider else 'Disabled'
         }
     
     def _process_semgrep_analysis(self, semgrep_result: Dict[str, Any], 

@@ -223,7 +223,6 @@ class PromptManager:
             content: Processed content
             general_rubric: General rubric instructions
             rubric_group: Group of rubric criteria to evaluate
-            historical_context: Optional historical context from similar submissions
             
         Returns:
             Complete prompt for rubric evaluation
@@ -287,13 +286,8 @@ You must respond with a valid JSON object containing evaluations for each criter
 2. Include all criteria from the rubric group
 3. Ensure scores are in the range give in rubric and according to the rubric (0 to max_points)
 4. Provide detailed, constructive feedback
-5. Use exact criterion names as provided in the rubric"""
-        
-        # Add instructions for using historical context if provided
-        if historical_context.strip():
-            prompt += """
-6. Consider the historical context provided to ensure consistent scoring with similar past submissions
-7. Use historical examples as calibration points while maintaining fairness"""
+5. Consider the historical context provided to ensure consistent scoring with similar past submissions
+6. Use historical examples as calibration points while maintaining fairness"""
         
         prompt += """
 

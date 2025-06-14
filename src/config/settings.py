@@ -69,9 +69,7 @@ class Settings:
         self.project_assignment = os.getenv('PROJECT_ASSIGNMENT', 'functional_programming_milestone_3')
         
         # FAISS Historical Context Configuration
-        self.enable_historical_context = os.getenv('ENABLE_HISTORICAL_CONTEXT', 'false').lower() == 'true'
         self.faiss_index_path = Path(os.getenv('FAISS_INDEX_PATH', 'src/faiss/index'))
-        self.historical_context_examples = int(os.getenv('HISTORICAL_CONTEXT_EXAMPLES', '3'))
         self.similarity_threshold = float(os.getenv('SIMILARITY_THRESHOLD', '0.3'))
         self.include_assignment_stats = os.getenv('INCLUDE_ASSIGNMENT_STATS', 'true').lower() == 'true'
         self.code_embedding_model = os.getenv('CODE_EMBEDDING_MODEL', 'microsoft/codebert-base')
@@ -184,9 +182,7 @@ class Settings:
             Dictionary containing FAISS configuration
         """
         return {
-            'enabled': self.enable_historical_context,
             'index_path': str(self.faiss_index_path),
-            'max_examples': self.historical_context_examples,
             'similarity_threshold': self.similarity_threshold,
             'include_assignment_stats': self.include_assignment_stats,
             'embedding_model': self.code_embedding_model,

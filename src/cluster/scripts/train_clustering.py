@@ -74,7 +74,7 @@ Examples:
         "--embedder-type",
         type=str,
         required=True,
-        choices=["java", "repomix"],
+        choices=["java", "repomix", "issues"],
         help="Type of embedder to use"
     )
     
@@ -82,7 +82,7 @@ Examples:
         "--model-name",
         type=str,
         default="starCoder2:7b",
-        help="Model name for embedder (default: starCoder2:7b)"
+        help="Model name for code embedders (java/repomix) (default: starCoder2:7b)"
     )
     
     # Clustering configuration
@@ -152,6 +152,21 @@ Examples:
         help="Cache embeddings for faster repeated training"
     )
     
+    # Issues embedder specific options
+    parser.add_argument(
+        "--issues-file",
+        type=str,
+        default=None,
+        help="Path to JSON file containing student issues (for issues embedder)"
+    )
+    
+    parser.add_argument(
+        "--sentence-model",
+        type=str,
+        default="all-MiniLM-L6-v2",
+        help="Sentence transformer model for issues embedder (default: all-MiniLM-L6-v2)"
+    )
+    
     # Logging
     parser.add_argument(
         "--verbose",
@@ -176,7 +191,14 @@ def create_output_directory(args) -> Path:
     else:
         # Auto-generate output directory name
         task_name = Path(args.task_folder).name
-        output_name = f"{task_name}_{args.embedder_type}_{args.algorithm}_{args.model_name.replace(':', '_')}"
+        
+        # Use appropriate model name based on embedder type
+        if args.embedder_type == "issues":
+            model_suffix = args.sentence_model.replace('-', '_').replace(':', '_')
+        else:
+            model_suffix = args.model_name.replace(':', '_')
+        
+        output_name = f"{task_name}_{args.embedder_type}_{args.algorithm}_{model_suffix}"
         output_dir = Path("models") / output_name
     
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -195,7 +217,10 @@ def main():
     logger.info("Starting clustering training")
     logger.info(f"Task folder: {args.task_folder}")
     logger.info(f"Embedder: {args.embedder_type}")
-    logger.info(f"Model: {args.model_name}")
+    if args.embedder_type == "issues":
+        logger.info(f"Sentence Model: {args.sentence_model}")
+    else:
+        logger.info(f"Model: {args.model_name}")
     logger.info(f"Algorithm: {args.algorithm}")
     
     try:
@@ -209,13 +234,28 @@ def main():
         output_dir = create_output_directory(args)
         logger.info(f"Output directory: {output_dir}")
         
-        # Initialize processor
-        logger.info("Initializing submission processor...")
-        processor = SubmissionProcessor(str(task_folder))
-        
-        # Extract submissions
-        logger.info("Extracting submissions...")
-        submissions = processor.extract_submissions(java_only=args.java_only)
+        # Initialize processor based on embedder type
+        if args.embedder_type == "issues":
+            # Use issue processor for issues embedder
+            if not args.issues_file:
+                logger.error("--issues-file is required for issues embedder")
+                sys.exit(1)
+            
+            from src.cluster.processors.issue_processor import IssueProcessor
+            logger.info("Initializing issue processor...")
+            processor = IssueProcessor(args.issues_file)
+            
+            # Extract submissions
+            logger.info("Extracting issue-based submissions...")
+            submissions = processor.extract_submissions(min_issues=1)
+        else:
+            # Use regular submission processor for code-based embedders
+            logger.info("Initializing submission processor...")
+            processor = SubmissionProcessor(str(task_folder))
+            
+            # Extract submissions
+            logger.info("Extracting submissions...")
+            submissions = processor.extract_submissions(java_only=args.java_only)
         
         if not submissions:
             logger.error("No submissions found or processed")
@@ -246,12 +286,24 @@ def main():
                 'use_compression': True,
                 'remove_comments': False
             })
+        elif args.embedder_type == "issues":
+            embedder_kwargs.update({
+                'sentence_model': args.sentence_model,
+                'use_issue_clustering': True,
+                'similarity_threshold': 0.8
+            })
+            if args.issues_file:
+                embedder_kwargs['issues_file'] = args.issues_file
         
-        embedder = EmbedderFactory.create_embedder(
-            embedder_type=args.embedder_type,
-            model_name=args.model_name,
-            **embedder_kwargs
-        )
+        # For issues embedder, use the factory method that doesn't require model_name
+        if args.embedder_type == "issues":
+            embedder = EmbedderFactory.create_issue_embedder(**embedder_kwargs)
+        else:
+            embedder = EmbedderFactory.create_embedder(
+                embedder_type=args.embedder_type,
+                model_name=args.model_name,
+                **embedder_kwargs
+            )
         
         logger.info(f"Embedder info: {embedder.get_embedding_info()}")
         
@@ -304,7 +356,7 @@ def main():
         training_config = {
             'task_folder': str(task_folder),
             'embedder_type': args.embedder_type,
-            'model_name': args.model_name,
+            'model_name': args.sentence_model if args.embedder_type == "issues" else args.model_name,
             'algorithm': args.algorithm,
             'n_clusters': args.n_clusters,
             'random_state': args.random_state,
