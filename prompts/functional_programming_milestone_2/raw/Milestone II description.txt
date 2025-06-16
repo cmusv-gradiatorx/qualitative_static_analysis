@@ -1,0 +1,64 @@
+﻿Milestone II
+
+1. Functional scope
+As part of this milestone, you need to develop a handful of features end-to-end (including side effects), data types that are used as part of them as well as some unit tests. The objective is to implement a subset of standalone functionalities that you can test in isolation:
+* Historical arbitrage opportunities calculation (https://canvas.cmu.edu/courses/41846/assignments/767955) (every student proposes his own implementation)
+* Trading strategy management
+* Retrieval of cross-traded currency pairs
+* Real-time market data management
+* Annualized return metric calculation (teams of 4)
+
+1.1 Trading strategy management
+The system needs to handle input from the user to provide trading strategy parameters and update some of them (see specification). Such actions should be represented as REST API endpoints. The system will not have a user interface hence the endpoints can be invoked/tested with curl.
+There are many options to implement Web applications in F#, and one of the more lightweight approaches is using Suave. It is a F#-first web library designed to allow you to model your web applications using an entirely functional-first model.
+You are not constrained to use it but keep in mind that you cannot use object-orientation features of F# and many alternatives rely on them.
+Below you'll find some useful resources to get you started with Suave:
+* Official documentation (https://suave.io/index.html)
+* Get programming with F#, Isaac Abraham - Introducing Suave (https://learning.oreilly.com/library/view/get-programmingwith/9781617293993/OEBPS/Text/kindle_split_054.html#:-:text=37.4.%20Introducing%20Suave)
+* Functional-first Web Applications in F#, Krzystof Cieslak (https://www.compositional-it.com/news-blog/functional-first-web-applications-in-f/) (also discusses alternatives to Suave)
+
+1.2 Retrieval of cross-traded currency pairs
+The system needs to handle input from the user to retrieve a list of cross-traded crypto currencies, therefore this functionality has to be exposed as a REST API (see above for more details).
+The system allows to trade crypto currencies on three exchanges: Bitfinex, Bitstamp, Kraken. In order to identify currency pairs that are cross-traded, you need to retrieve a list of traded currencies from every exchange and perform a pair-wise comparison.
+Each crypto currency exchange provides a public API endpoint, as per the list below:
+* Bitfinex: https://api-pub.bitfinex.com/v2/conf/pub:list:pair:exchange
+* Bitstamp https://www.bitstamp.net/api/v2/ticker/
+* Kraken https://api.kraken.com/0/public/AssetPairs
+
+There are many ways to consume data from HTTP endpoints and Get programming with F#, Isaac Abraham (https://learning.oreilly.com/library/view/get-programming-with/9781617293993/OEBPS/Text/kindle_split_055.html) gives you a good overview of the options.
+The result of the processing (list of cross-traded currencies) needs to be storied in the database in the following format: currency1Symbol-currency2symbol (e.g. CHZ-USD).
+
+1.3 Real-time market data management
+Once the trading is initiated by the user, a subscription to real-time market data feed should take place and the data should be retrieved continuously.
+For that purpose, a 3rd party API will be used - Polygon.
+You can access Polygon's Crypto API documentation here (https://polygon.io/docs/crypto/getting-started). In order to generate an API key for your team, please login in to the Polygon dashboard (https://polygon.io/dashboard) using the following credentials (shared among all teams): rwlodars@andrew.cmu.edu
+The continuous nature of real-time data feed calls for a websocket connectivity. Some of the technology options here are the standard .NET library System.Net.WebSockets (or others that build on it) and Suave	(https://suave.io/websockets.html).
+As an accelerator, a working starer code is provided (https://canvas.cmu.edu/courses/41846/files/11975378?wrap=1) (https://canvas.cmu.edu/courses/41846/files/11975378/download?download_frd=1) to handle market data retrieval with Polygon.
+Real time market data is used to create a "cache" of latest quotes across tracked currency pairs and exchanges. As part of real-time trading algorithm (implemented in the next milestone), incoming quotes should be evaluated against information from the "cache" to determine the potential arbitrage opportunity.
+
+1.4 Annualized return metric calculation
+This functionality needs to be exposed as a REST API endpoint (see 1.1 for more details). For the time being, the start date of trading activity can be hardcoded to 10/24/2024; cumulative P&L value can be hardcoded at the time being as well.
+
+2. Error handling
+The solution should employ railroad-oriented programming for error handling and use a variety of adapter/converter functions depending on the need (refer to lecture 8 for more details).
+Error handling mechanism should be implemented for business logic encompassing edge cases that help ensure functional consistency in the system. Only domain errors should be accounted for during Milestone II. Respecting "railroad" structure for the functions that will employ side effects in the future will help you avoid refactoring the code.
+
+3. Unit tests
+Some area of the solution (see list below) need to be covered with unit tests - a handful of tests per functionality is expected. Given that each team structures the workflows as they please, unit tests should match the granularity of your workflow steps.
+
+Submission
+To verify completeness of your implementation, please prepare a document (README/pdf/doc/other) that lists the functionalities implemented (please use the same structure as in the milestone description) and the source code file where they can be found.
+
+Evaluation
+The source code needs to be aligned with Functional Programming and Domain-Driven Design principles, which implies that (the list is nonexhaustive): 
+* The solution domain model is implemented using algebraic type system, which: 
+	* uses ubiquitous language (devoid of technical jargon and understandable to business), 
+	* employs a variety of constructs (e.g. simple type, discriminated union, option type, generics) to ensure that data follows business rules Business workflows are implemented as composition of functions. 
+* Codebase respects the Onion Architecture correctly.
+* Error handling is implemented with the Railroad-Oriented Programming approach.
+* Each business logic function should work on immutable data.
+* Dependencies are managed explicitly as function parameters.
+* Control flow expressions are avoided, and pattern matching/collections are used instead. 
+* OOP constructs of F# are not used.
+
+The solution will be evaluated among two dimensions: completeness and correctness (7) and respect of DDD and Functional Programming principles (3). 10 points in total.

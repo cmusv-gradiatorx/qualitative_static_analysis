@@ -1,0 +1,121 @@
+# ArbitrageGainer - Milestone II Assignment Details
+
+## Project Overview
+**ArbitrageGainer** is a cryptocurrency arbitrage trading system that identifies and exploits price differences across multiple cryptocurrency exchanges (Bitfinex, Bitstamp, Kraken). The system aims to automatically purchase cryptocurrencies at lower prices on one exchange and sell them at higher prices on another exchange.
+
+## Milestone II Focus - Standalone Functionalities
+This milestone emphasizes developing **standalone functionalities that can be tested in isolation**. Each feature should be implemented end-to-end including side effects, proper data types, and comprehensive unit tests.
+
+### Core Milestone II Requirements:
+
+#### 1. Historical Arbitrage Opportunities Calculation
+- **Objective**: Student-specific implementation of arbitrage opportunity identification from historical data
+- **Requirements**:
+  - Load and process historical market data
+  - Identify arbitrage opportunities using specified algorithm
+  - Implement functional data processing with map-reduce patterns
+  - Store results in database format: `currency1Symbol-currency2Symbol` with opportunity count
+- **Algorithm**: 
+  - Group quotes into 5ms buckets
+  - For currency pairs with multi-exchange data, compare bid/ask prices
+  - Identify opportunities with >$0.01 price difference
+  - Account for bidirectional comparison (exchange 1→2 and 2→1)
+
+#### 2. Trading Strategy Management
+- **Objective**: REST API endpoints for trading parameter management using Suave
+- **Requirements**:
+  - API endpoints for inputting/updating trading strategy parameters
+  - Parameters include: number of currencies to track, minimal price spread, profit thresholds, transaction limits
+  - User email management for notifications
+  - Parameter validation and persistence
+  - **Critical**: Avoid direct infrastructure dependencies in handlers (use service layer)
+
+#### 3. Cross-traded Currency Pairs Retrieval  
+- **Objective**: Multi-exchange API integration for currency pair identification
+- **Requirements**:
+  - Integration with all three exchange APIs (Bitfinex, Bitstamp, Kraken)
+  - Pair-wise comparison logic to identify cross-traded currencies
+  - Database storage in format: `currency1Symbol-currency2Symbol` (e.g., CHZ-USD)
+  - REST API endpoint for retrieval
+  - **Exchange APIs**:
+    - Bitfinex: `https://api-pub.bitfinex.com/v2/conf/pub:list:pair:exchange`
+    - Bitstamp: `https://www.bitstamp.net/api/v2/ticker/`
+    - Kraken: `https://api.kraken.com/0/public/AssetPairs`
+
+#### 4. Real-time Market Data Management
+- **Objective**: Polygon.io websocket integration with market data caching
+- **Requirements**:
+  - Websocket connectivity to Polygon Crypto API
+  - Market data subscription triggered by "Start trading" endpoint (NOT automatic)
+  - Agent-based caching system for latest quotes per exchange/currency pair
+  - Multi-element subscription handling (currency pairs, historical analysis, cross-traded currencies)
+  - **Critical**: Subscription should be user-initiated, not automatic on startup
+
+#### 5. Annualized Return Metric Calculation (4-person teams only)
+- **Objective**: REST API endpoint for annualized return calculation
+- **Requirements**:
+  - REST API endpoint implementation
+  - Mathematical formula: `(cumulative P&L / Initial Investment) ^ (1 / Duration in Years) - 1`
+  - Integration with P&L data
+  - Start date handling (hardcoded to 10/24/2024 acceptable for milestone)
+  - Cumulative P&L value integration
+
+## Technical Requirements
+
+### Functional Programming Principles:
+- **Railroad-Oriented Programming** for error handling
+- **Immutable data structures** throughout
+- **Pure functions** and explicit dependency management
+- **Variety of function types** and pipeline-based mechanisms
+- **Extensive pattern matching** usage
+- **Avoidance of control flow expressions** (if statements)
+
+### Domain-Driven Design:
+- **Primitive and composite types** for domain modeling
+- **Simple types** giving meaning to primitive values
+- **Ubiquitous language** devoid of technical jargon
+- **Onion Architecture** with proper layer separation
+- **Service layer** as application entry point (not infrastructure)
+
+### Architecture Standards:
+- **Service Layer**: Handlers accept infrastructure dependencies as parameters
+- **Infrastructure Injection**: At application root (main)
+- **Dependency-Injected Routing**: Pass dependencies to handlers for routing configuration
+- **Domain Logic Separation**: Keep domain separate from infrastructure concerns
+
+### Error Handling:
+- **Domain Error Focus**: Handle business logic edge cases (not just infrastructure)
+- **Railroad Structure**: For functions that will employ side effects
+- **Adapter/Converter Functions**: Variety based on context needs
+- **Functional Consistency**: Through proper error handling patterns
+
+## Evaluation Criteria
+
+### Completeness and Correctness (7 points):
+- Implementation quality of each standalone functionality
+- Integration with external APIs and services
+- Database persistence and retrieval
+- Functional requirements satisfaction
+
+### DDD and Functional Programming Principles (3 points):
+- Adherence to functional programming paradigms
+- Domain modeling sophistication
+- Architectural pattern implementation
+- Error handling approach
+
+## Unit Testing Requirements:
+- **Granular Testing**: Beyond basic non-empty and data type checks
+- **Map-Reduce Testing**: Detailed testing of processing phases
+- **Independent Tests**: For key functionalities with good scenario coverage
+- **Workflow Step Granularity**: Match testing to workflow implementation structure
+- **Business Logic Focus**: Test domain logic functions thoroughly
+
+## Technology Stack:
+- **F# Programming Language**: Functional-first approach
+- **Suave Web Framework**: For REST API implementation
+- **Polygon.io API**: Real-time market data
+- **Exchange APIs**: Bitfinex, Bitstamp, Kraken for cross-trading analysis
+- **Websocket Connectivity**: For real-time data feeds
+- **Database Integration**: For persistence requirements
+
+Remember: This milestone focuses on **standalone functionality development** where each component works in isolation with proper testing, demonstrating functional programming principles and domain-driven design patterns.
