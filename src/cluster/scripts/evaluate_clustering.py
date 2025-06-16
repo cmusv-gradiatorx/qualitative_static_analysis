@@ -51,8 +51,18 @@ def create_output_directory(model_dir: Path, config: Dict[str, Any]) -> Path:
     algorithm = config['algorithm']
     model_name = config['model_name'].replace(':', '_')
     
+    # Include number of clusters in the filename
+    if algorithm == "dbscan":
+        algorithm_kwargs = config.get('algorithm_kwargs', {})
+        eps = algorithm_kwargs.get('eps', 0.5)
+        min_samples = algorithm_kwargs.get('min_samples', 2)
+        cluster_suffix = f"eps{eps}_min{min_samples}"
+    else:
+        n_clusters = config['n_clusters']
+        cluster_suffix = f"{n_clusters}clusters"
+    
     # Create output directory name
-    output_name = f"{task_name}_{embedder_type}_{algorithm}_{model_name}_evaluation"
+    output_name = f"{task_name}_{embedder_type}_{algorithm}_{model_name}_{cluster_suffix}_evaluation"
     output_dir = Path("cluster_evaluation_results") / output_name
     
     # Create directory

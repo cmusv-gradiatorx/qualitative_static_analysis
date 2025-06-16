@@ -81,7 +81,7 @@ Examples:
     parser.add_argument(
         "--model-name",
         type=str,
-        default="starCoder2:7b",
+        default="starCoder2:3b",
         help="Model name for code embedders (java/repomix) (default: starCoder2:7b)"
     )
     
@@ -198,7 +198,13 @@ def create_output_directory(args) -> Path:
         else:
             model_suffix = args.model_name.replace(':', '_')
         
-        output_name = f"{task_name}_{args.embedder_type}_{args.algorithm}_{model_suffix}"
+        # Include number of clusters in the filename
+        if args.algorithm == "dbscan":
+            cluster_suffix = f"eps{args.eps}_min{args.min_samples}"
+        else:
+            cluster_suffix = f"{args.n_clusters}clusters"
+        
+        output_name = f"{task_name}_{args.embedder_type}_{args.algorithm}_{model_suffix}_{cluster_suffix}"
         output_dir = Path("models") / output_name
     
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -233,6 +239,10 @@ def main():
         # Create output directory
         output_dir = create_output_directory(args)
         logger.info(f"Output directory: {output_dir}")
+        
+        # Extract task name from task folder for cache organization
+        task_name = task_folder.name
+        logger.info(f"Task name: {task_name}")
         
         # Initialize processor based on embedder type
         if args.embedder_type == "issues":
@@ -277,7 +287,8 @@ def main():
         # Create embedder
         logger.info(f"Creating {args.embedder_type} embedder...")
         embedder_kwargs = {
-            'cache_embeddings': args.cache_embeddings
+            'cache_embeddings': args.cache_embeddings,
+            'task_name': task_name
         }
         
         # Add embedder-specific parameters

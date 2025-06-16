@@ -34,7 +34,7 @@ class IssueConfig(EmbedderConfig):
     max_issues_per_student: int = 50
     min_issue_frequency: int = 1  # Minimum times an issue must appear to be included
     use_issue_clustering: bool = True  # Whether to cluster similar issues first
-    similarity_threshold: float = 0.8  # Threshold for considering issues similar
+    similarity_threshold: float = 0.7  # Threshold for considering issues similar
     
     def __post_init__(self):
         super().__post_init__()
@@ -294,9 +294,17 @@ class IssueEmbedder(BaseEmbedder):
         """
         student_name = submission_data.get('student_name', 'unknown')
         
+        # Extract task information for cache structure
+        task_info = self._extract_task_info(submission_data)
+        
+        # Add issues file info to submission data for task extraction
+        if 'issues_file' not in submission_data and hasattr(self.issue_config, 'issues_file'):
+            submission_data = submission_data.copy()  # Don't modify original
+            submission_data['issues_file'] = self.issue_config.issues_file
+        
         # Check cache first
         if self.config.cache_embeddings:
-            cached_embedding = self._load_cached_embedding(student_name)
+            cached_embedding = self._load_cached_embedding(student_name, task_info)
             if cached_embedding is not None:
                 self.logger.debug(f"Loaded cached embedding for {student_name}")
                 return cached_embedding
@@ -312,8 +320,8 @@ class IssueEmbedder(BaseEmbedder):
         if len(profile_embedding) > 0:
             # Weighted combination
             combined_embedding = np.concatenate([
-                semantic_embedding * 0.7,  # Semantic features
-                profile_embedding * 0.3    # Profile features
+                semantic_embedding * 0.2,  # Semantic features
+                profile_embedding * 0.8    # Profile features
             ])
         else:
             combined_embedding = semantic_embedding
@@ -324,11 +332,9 @@ class IssueEmbedder(BaseEmbedder):
         
         # Cache the embedding
         if self.config.cache_embeddings:
-            self._save_cached_embedding(student_name, combined_embedding)
+            self._save_cached_embedding(student_name, combined_embedding, task_info)
         
         return combined_embedding
-    
-
     
     def get_embedding_info(self) -> Dict[str, Any]:
         """Get information about this embedder"""

@@ -49,6 +49,7 @@ class EmbedderFactory:
     def create_embedder(cls, 
                        embedder_type: str,
                        model_name: str = "starCoder2:3b",
+                       task_name: Optional[str] = None,
                        config: Optional[EmbedderConfig] = None,
                        **kwargs) -> BaseEmbedder:
         """
@@ -57,6 +58,7 @@ class EmbedderFactory:
         Args:
             embedder_type: Type of embedder ('java' or 'repomix')
             model_name: Model name for the embedder
+            task_name: Task name for cache organization (e.g., "task4_GildedRoseKata")
             config: Optional pre-configured EmbedderConfig instance
             **kwargs: Additional configuration parameters
             
@@ -84,14 +86,17 @@ class EmbedderFactory:
             # Merge kwargs with defaults
             config_kwargs = {
                 'model_name': model_name,
+                'task_name': task_name,
                 **kwargs
             }
             
             config = config_class(**config_kwargs)
         else:
-            # Update config with provided model_name and kwargs
+            # Update config with provided model_name, task_name and kwargs
             if hasattr(config, 'model_name'):
                 config.model_name = model_name
+            if hasattr(config, 'task_name') and task_name:
+                config.task_name = task_name
             for key, value in kwargs.items():
                 if hasattr(config, key):
                     setattr(config, key, value)
@@ -102,6 +107,7 @@ class EmbedderFactory:
     @classmethod
     def create_java_embedder(cls,
                            model_name: str = "starCoder2:7b",
+                           task_name: Optional[str] = None,
                            ollama_base_url: Optional[str] = None,
                            max_length: int = 8192,
                            normalize_embeddings: bool = True,
@@ -112,6 +118,7 @@ class EmbedderFactory:
         
         Args:
             model_name: StarCoder2 model name
+            task_name: Task name for cache organization
             ollama_base_url: Ollama server URL
             max_length: Maximum sequence length
             normalize_embeddings: Whether to normalize embeddings
@@ -123,6 +130,7 @@ class EmbedderFactory:
         """
         config_kwargs = {
             'model_name': model_name,
+            'task_name': task_name,
             'max_length': max_length,
             'normalize_embeddings': normalize_embeddings,
             'cache_embeddings': cache_embeddings,
@@ -138,6 +146,7 @@ class EmbedderFactory:
     @classmethod
     def create_repomix_embedder(cls,
                               model_name: str = "starCoder2:3b",
+                              task_name: Optional[str] = None,
                               ollama_base_url: Optional[str] = None,
                               max_tokens: int = 128000,
                               use_compression: bool = True,
@@ -150,6 +159,7 @@ class EmbedderFactory:
         
         Args:
             model_name: StarCoder2 model name
+            task_name: Task name for cache organization
             ollama_base_url: Ollama server URL
             max_tokens: Maximum token limit for repomix
             use_compression: Whether to use compression
@@ -163,6 +173,7 @@ class EmbedderFactory:
         """
         config_kwargs = {
             'model_name': model_name,
+            'task_name': task_name,
             'max_tokens': max_tokens,
             'use_compression': use_compression,
             'remove_comments': remove_comments,
@@ -182,6 +193,7 @@ class EmbedderFactory:
     @classmethod
     def create_issue_embedder(cls,
                             sentence_model: str = "all-MiniLM-L6-v2",
+                            task_name: Optional[str] = None,
                             issues_file: Optional[str] = None,
                             max_issues_per_student: int = 50,
                             use_issue_clustering: bool = True,
@@ -192,6 +204,7 @@ class EmbedderFactory:
         
         Args:
             sentence_model: Sentence transformer model name
+            task_name: Task name for cache organization
             issues_file: Path to JSON file containing student issues
             max_issues_per_student: Maximum issues per student to consider
             use_issue_clustering: Whether to cluster similar issues
@@ -203,6 +216,7 @@ class EmbedderFactory:
         """
         config_kwargs = {
             'sentence_model': sentence_model,
+            'task_name': task_name,
             'max_issues_per_student': max_issues_per_student,
             'use_issue_clustering': use_issue_clustering,
             'similarity_threshold': similarity_threshold,

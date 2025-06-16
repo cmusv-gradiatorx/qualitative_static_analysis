@@ -30,8 +30,9 @@ class EmbedderConfig:
     max_length: int = 8192
     normalize_embeddings: bool = True
     cache_embeddings: bool = True
-    cache_dir: str = ".cache/cluster"
+    cache_dir: str = ".cache"
     timeout: int = 60
+    task_name: Optional[str] = None  # e.g., "task4_GildedRoseKata"
     
     def __post_init__(self):
         """Load configuration from environment variables"""
@@ -105,9 +106,12 @@ class BaseEmbedder(ABC):
         """
         student_name = submission_data.get('student_name', 'unknown')
         
+        # Extract task information for cache structure
+        task_info = self._extract_task_info(submission_data)
+        
         # Check cache first
         if self.config.cache_embeddings:
-            cached_embedding = self._load_cached_embedding(student_name)
+            cached_embedding = self._load_cached_embedding(student_name, task_info)
             if cached_embedding is not None:
                 self.logger.debug(f"Loaded cached embedding for {student_name}")
                 return cached_embedding
@@ -122,7 +126,7 @@ class BaseEmbedder(ABC):
         
         # Cache the embedding
         if self.config.cache_embeddings:
-            self._save_cached_embedding(student_name, embedding)
+            self._save_cached_embedding(student_name, embedding, task_info)
         
         return embedding
     
@@ -209,41 +213,144 @@ class BaseEmbedder(ABC):
         """Return zero embedding as fallback"""
         return np.zeros(self.embedding_dim, dtype=np.float32)
     
-    def _get_cache_path(self, student_name: str) -> Path:
-        """Get cache file path for a student"""
-        cache_dir = Path(self.config.cache_dir) / self.__class__.__name__
+    def _extract_task_info(self, submission_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract task information from submission data for cache structure.
+        
+        Args:
+            submission_data: Submission data dictionary
+            
+        Returns:
+            Dictionary containing task information
+        """
+        task_info = {
+            'task_name': self.config.task_name,
+            'task_number': 'unknown'
+        }
+        
+        # Use the configured task name if available
+        if self.config.task_name:
+            task_name = self.config.task_name
+            task_info['task_name'] = task_name
+            
+            # Extract task number from task name (e.g., "task4_GildedRoseKata" -> "task4")
+            if task_name.startswith('task') and '_' in task_name:
+                task_info['task_number'] = task_name.split('_')[0]
+            else:
+                # If it doesn't follow the expected format, use the whole name
+                task_info['task_number'] = task_name
+        
+        # Fallback: try to extract from submission data if task_name not configured
+        elif 'metadata' in submission_data and 'task_folder' in submission_data['metadata']:
+            task_name = submission_data['metadata']['task_folder']
+            task_info['task_name'] = task_name
+            
+            if task_name.startswith('task') and '_' in task_name:
+                task_info['task_number'] = task_name.split('_')[0]
+            else:
+                task_info['task_number'] = task_name
+        
+        # Additional fallback for issues file path (for issue submissions)
+        elif 'issues_file' in submission_data:
+            issues_file = submission_data['issues_file']
+            if isinstance(issues_file, str):
+                # Extract task name from issues file path
+                # e.g., "src/cluster/data/issues/task4_GildedRoseKata_student_issues.json"
+                file_path = Path(issues_file)
+                filename = file_path.stem
+                if '_student_issues' in filename:
+                    task_name = filename.replace('_student_issues', '')
+                    task_info['task_name'] = task_name
+                    
+                    if task_name.startswith('task') and '_' in task_name:
+                        task_info['task_number'] = task_name.split('_')[0]
+                    else:
+                        task_info['task_number'] = task_name
+        
+        return task_info
+    
+    def _get_cache_path(self, student_name: str, task_info: Dict[str, Any] = None) -> Path:
+        """
+        Get cache file path for a student with new directory structure.
+        
+        New structure: .cache/task_number/cluster/EmbedderName/filename.npy
+        
+        Args:
+            student_name: Student name
+            task_info: Task information dictionary
+            
+        Returns:
+            Path to cache file
+        """
+        if task_info is None:
+            task_info = {'task_number': 'unknown'}
+        
+        # Build cache directory path: .cache/task_number/cluster/EmbedderName/
+        task_number = task_info.get('task_number', 'unknown')
+        cache_dir = Path(self.config.cache_dir) / task_number / "cluster" / self.__class__.__name__
         cache_dir.mkdir(parents=True, exist_ok=True)
         
         # Create filename from student name and model
         filename = f"{student_name}_{self.config.model_name.replace(':', '_')}.npy"
         return cache_dir / filename
     
-    def _load_cached_embedding(self, student_name: str) -> Optional[np.ndarray]:
+    def _load_cached_embedding(self, student_name: str, task_info: Dict[str, Any]) -> Optional[np.ndarray]:
         """Load cached embedding if it exists"""
         try:
-            cache_path = self._get_cache_path(student_name)
+            cache_path = self._get_cache_path(student_name, task_info)
             if cache_path.exists():
                 return np.load(cache_path)
         except Exception as e:
             self.logger.warning(f"Failed to load cached embedding for {student_name}: {e}")
         return None
     
-    def _save_cached_embedding(self, student_name: str, embedding: np.ndarray) -> None:
+    def _save_cached_embedding(self, student_name: str, embedding: np.ndarray, task_info: Dict[str, Any]) -> None:
         """Save embedding to cache"""
         try:
-            cache_path = self._get_cache_path(student_name)
+            cache_path = self._get_cache_path(student_name, task_info)
             np.save(cache_path, embedding)
             self.logger.debug(f"Cached embedding for {student_name}")
         except Exception as e:
             self.logger.warning(f"Failed to cache embedding for {student_name}: {e}")
     
-    def clear_cache(self) -> None:
-        """Clear all cached embeddings for this embedder"""
+    def clear_cache(self, task_name: Optional[str] = None) -> None:
+        """
+        Clear cached embeddings for this embedder.
+        
+        Args:
+            task_name: Optional task name to clear cache for specific task.
+                      If None, clears cache for all tasks.
+        """
         try:
-            cache_dir = Path(self.config.cache_dir) / self.__class__.__name__
-            if cache_dir.exists():
-                import shutil
-                shutil.rmtree(cache_dir)
-                self.logger.info(f"Cleared cache for {self.__class__.__name__}")
+            import shutil
+            
+            if task_name:
+                # Clear cache for specific task
+                cache_dir = Path(self.config.cache_dir) / task_name / "cluster" / self.__class__.__name__
+                if cache_dir.exists():
+                    shutil.rmtree(cache_dir)
+                    self.logger.info(f"Cleared {task_name} cache for {self.__class__.__name__}")
+                else:
+                    self.logger.info(f"No cache found for {task_name}/{self.__class__.__name__}")
+            else:
+                # Clear cache for all tasks
+                base_cache_dir = Path(self.config.cache_dir)
+                if base_cache_dir.exists():
+                    # Find all task directories and clear this embedder's cache
+                    cleared_tasks = []
+                    for task_dir in base_cache_dir.iterdir():
+                        if task_dir.is_dir():
+                            embedder_cache_dir = task_dir / "cluster" / self.__class__.__name__
+                            if embedder_cache_dir.exists():
+                                shutil.rmtree(embedder_cache_dir)
+                                cleared_tasks.append(task_dir.name)
+                    
+                    if cleared_tasks:
+                        self.logger.info(f"Cleared cache for {self.__class__.__name__} in tasks: {', '.join(cleared_tasks)}")
+                    else:
+                        self.logger.info(f"No cache found for {self.__class__.__name__}")
+                else:
+                    self.logger.info(f"Cache directory does not exist: {base_cache_dir}")
+                    
         except Exception as e:
             self.logger.warning(f"Failed to clear cache: {e}") 

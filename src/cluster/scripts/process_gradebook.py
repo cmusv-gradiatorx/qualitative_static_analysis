@@ -232,7 +232,7 @@ def save_reference_clusters(output_path: Path, student_data: List[Tuple[str, flo
         writer = csv.writer(csvfile)
         
         # Write header
-        writer.writerow(['student_name', 'task1_score', 'reference_cluster'])
+        writer.writerow(['student_name', 'score', 'reference_cluster'])
         
         # Write student data sorted by cluster then by name
         sorted_data = sorted(student_data, key=lambda x: (x[2], x[0]))

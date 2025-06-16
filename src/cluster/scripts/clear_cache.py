@@ -42,17 +42,20 @@ Examples:
   # Clear all cached embeddings
   python src/cluster/scripts/clear_cache.py --all
 
-  # Clear cache for specific embedder type
+  # Clear cache for specific task
+  python src/cluster/scripts/clear_cache.py --task-name task4_GildedRoseKata
+
+  # Clear cache for specific embedder type in all tasks
   python src/cluster/scripts/clear_cache.py --embedder-type java
 
-  # Clear cache for specific embedder type
-  python src/cluster/scripts/clear_cache.py --embedder-type repomix
+  # Clear cache for specific embedder in specific task
+  python src/cluster/scripts/clear_cache.py --embedder-type java --task-name task4_GildedRoseKata
 
   # Clear cache in specific directory
-  python src/cluster/scripts/clear_cache.py --cache-dir .cache/cluster --all
+  python src/cluster/scripts/clear_cache.py --cache-dir .cache --all
 
-  # Clear cache for specific student
-  python src/cluster/scripts/clear_cache.py --student-name john_doe
+  # Clear cache for specific student in specific task
+  python src/cluster/scripts/clear_cache.py --student-name john_doe --task-name task4_GildedRoseKata
         """
     )
     
@@ -66,8 +69,14 @@ Examples:
     parser.add_argument(
         "--embedder-type",
         type=str,
-        choices=["java", "repomix"],
+        choices=["java", "repomix", "issues"],
         help="Clear cache for specific embedder type only"
+    )
+    
+    parser.add_argument(
+        "--task-name",
+        type=str,
+        help="Clear cache for specific task only (e.g., task4_GildedRoseKata)"
     )
     
     parser.add_argument(
@@ -118,19 +127,32 @@ def get_cache_directory(cache_dir: Optional[str] = None) -> Path:
     if cache_dir:
         return Path(cache_dir)
     
-    # Use environment variable or default
-    cache_dir_env = os.environ.get('CLUSTER_CACHE_DIR', '.cache/cluster')
+    # Use environment variable or default (changed from .cache/cluster to .cache)
+    cache_dir_env = os.environ.get('CLUSTER_CACHE_DIR', '.cache')
     return Path(cache_dir_env)
 
 
-def clear_all_cache(cache_dir: Path, logger) -> int:
+def clear_all_cache(cache_dir: Path, logger, task_name: Optional[str] = None) -> int:
     """Clear all cached embeddings"""
     if not cache_dir.exists():
         logger.info(f"Cache directory does not exist: {cache_dir}")
         return 0
     
     files_removed = 0
-    for item in cache_dir.rglob('*'):
+    
+    if task_name:
+        # Clear cache for specific task only
+        task_cache_dir = cache_dir / task_name
+        if not task_cache_dir.exists():
+            logger.info(f"Task cache directory does not exist: {task_cache_dir}")
+            return 0
+        
+        target_dir = task_cache_dir
+    else:
+        # Clear cache for all tasks
+        target_dir = cache_dir
+    
+    for item in target_dir.rglob('*'):
         if item.is_file():
             try:
                 item.unlink()
@@ -140,7 +162,7 @@ def clear_all_cache(cache_dir: Path, logger) -> int:
                 logger.warning(f"Failed to remove {item}: {e}")
     
     # Remove empty directories
-    for item in cache_dir.rglob('*'):
+    for item in target_dir.rglob('*'):
         if item.is_dir() and not any(item.iterdir()):
             try:
                 item.rmdir()
@@ -151,11 +173,12 @@ def clear_all_cache(cache_dir: Path, logger) -> int:
     return files_removed
 
 
-def clear_embedder_cache(cache_dir: Path, embedder_type: str, logger) -> int:
+def clear_embedder_cache(cache_dir: Path, embedder_type: str, logger, task_name: Optional[str] = None) -> int:
     """Clear cache for specific embedder type"""
     embedder_cache_dirs = {
         'java': 'JavaEmbedder',
-        'repomix': 'RepomixEmbedder'
+        'repomix': 'RepomixEmbedder',
+        'issues': 'IssueEmbedder'
     }
     
     embedder_dir_name = embedder_cache_dirs.get(embedder_type.lower())
@@ -163,66 +186,122 @@ def clear_embedder_cache(cache_dir: Path, embedder_type: str, logger) -> int:
         logger.error(f"Unknown embedder type: {embedder_type}")
         return 0
     
-    embedder_cache_dir = cache_dir / embedder_dir_name
-    
-    if not embedder_cache_dir.exists():
-        logger.info(f"Cache directory for {embedder_type} does not exist: {embedder_cache_dir}")
-        return 0
-    
     files_removed = 0
-    for item in embedder_cache_dir.rglob('*'):
-        if item.is_file():
-            try:
-                item.unlink()
-                files_removed += 1
-                logger.debug(f"Removed: {item}")
-            except Exception as e:
-                logger.warning(f"Failed to remove {item}: {e}")
     
-    # Remove the embedder directory if empty
-    if not any(embedder_cache_dir.iterdir()):
-        try:
-            embedder_cache_dir.rmdir()
-            logger.debug(f"Removed empty directory: {embedder_cache_dir}")
-        except Exception as e:
-            logger.warning(f"Failed to remove directory {embedder_cache_dir}: {e}")
+    if task_name:
+        # Clear cache for specific task and embedder
+        embedder_cache_dir = cache_dir / task_name / "cluster" / embedder_dir_name
+        
+        if not embedder_cache_dir.exists():
+            logger.info(f"Cache directory for {embedder_type} in {task_name} does not exist: {embedder_cache_dir}")
+            return 0
+        
+        for item in embedder_cache_dir.rglob('*'):
+            if item.is_file():
+                try:
+                    item.unlink()
+                    files_removed += 1
+                    logger.debug(f"Removed: {item}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove {item}: {e}")
+        
+        # Remove the embedder directory if empty
+        if not any(embedder_cache_dir.iterdir()):
+            try:
+                embedder_cache_dir.rmdir()
+                logger.debug(f"Removed empty directory: {embedder_cache_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to remove directory {embedder_cache_dir}: {e}")
+    else:
+        # Clear cache for all tasks for this embedder
+        for task_dir in cache_dir.iterdir():
+            if task_dir.is_dir():
+                embedder_cache_dir = task_dir / "cluster" / embedder_dir_name
+                
+                if embedder_cache_dir.exists():
+                    for item in embedder_cache_dir.rglob('*'):
+                        if item.is_file():
+                            try:
+                                item.unlink()
+                                files_removed += 1
+                                logger.debug(f"Removed: {item}")
+                            except Exception as e:
+                                logger.warning(f"Failed to remove {item}: {e}")
+                    
+                    # Remove the embedder directory if empty
+                    if not any(embedder_cache_dir.iterdir()):
+                        try:
+                            embedder_cache_dir.rmdir()
+                            logger.debug(f"Removed empty directory: {embedder_cache_dir}")
+                        except Exception as e:
+                            logger.warning(f"Failed to remove directory {embedder_cache_dir}: {e}")
     
     return files_removed
 
 
-def clear_student_cache(cache_dir: Path, student_name: str, logger) -> int:
+def clear_student_cache(cache_dir: Path, student_name: str, logger, task_name: Optional[str] = None) -> int:
     """Clear cache for specific student"""
     files_removed = 0
     
-    # Search for files containing the student name
-    for item in cache_dir.rglob('*'):
-        if item.is_file() and student_name in item.name:
-            try:
-                item.unlink()
-                files_removed += 1
-                logger.debug(f"Removed: {item}")
-            except Exception as e:
-                logger.warning(f"Failed to remove {item}: {e}")
+    if task_name:
+        # Search for files in specific task directory
+        task_cache_dir = cache_dir / task_name
+        if task_cache_dir.exists():
+            for item in task_cache_dir.rglob('*'):
+                if item.is_file() and student_name in item.name:
+                    try:
+                        item.unlink()
+                        files_removed += 1
+                        logger.debug(f"Removed: {item}")
+                    except Exception as e:
+                        logger.warning(f"Failed to remove {item}: {e}")
+        else:
+            logger.info(f"Task cache directory does not exist: {task_cache_dir}")
+    else:
+        # Search for files containing the student name in all tasks
+        for item in cache_dir.rglob('*'):
+            if item.is_file() and student_name in item.name:
+                try:
+                    item.unlink()
+                    files_removed += 1
+                    logger.debug(f"Removed: {item}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove {item}: {e}")
     
     return files_removed
 
 
-def clear_model_cache(cache_dir: Path, model_name: str, logger) -> int:
+def clear_model_cache(cache_dir: Path, model_name: str, logger, task_name: Optional[str] = None) -> int:
     """Clear cache for specific model"""
     files_removed = 0
     
     # Convert model name to filename format (replace : with _)
     model_filename = model_name.replace(':', '_')
     
-    # Search for files containing the model name
-    for item in cache_dir.rglob('*'):
-        if item.is_file() and model_filename in item.name:
-            try:
-                item.unlink()
-                files_removed += 1
-                logger.debug(f"Removed: {item}")
-            except Exception as e:
-                logger.warning(f"Failed to remove {item}: {e}")
+    if task_name:
+        # Search for files in specific task directory
+        task_cache_dir = cache_dir / task_name
+        if task_cache_dir.exists():
+            for item in task_cache_dir.rglob('*'):
+                if item.is_file() and model_filename in item.name:
+                    try:
+                        item.unlink()
+                        files_removed += 1
+                        logger.debug(f"Removed: {item}")
+                    except Exception as e:
+                        logger.warning(f"Failed to remove {item}: {e}")
+        else:
+            logger.info(f"Task cache directory does not exist: {task_cache_dir}")
+    else:
+        # Search for files containing the model name in all tasks
+        for item in cache_dir.rglob('*'):
+            if item.is_file() and model_filename in item.name:
+                try:
+                    item.unlink()
+                    files_removed += 1
+                    logger.debug(f"Removed: {item}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove {item}: {e}")
     
     return files_removed
 
@@ -324,16 +403,16 @@ def main():
         
         if args.all:
             logger.info("Clearing all cached embeddings...")
-            files_removed = clear_all_cache(cache_dir, logger)
+            files_removed = clear_all_cache(cache_dir, logger, args.task_name)
         elif args.embedder_type:
             logger.info(f"Clearing cache for {args.embedder_type} embedder...")
-            files_removed = clear_embedder_cache(cache_dir, args.embedder_type, logger)
+            files_removed = clear_embedder_cache(cache_dir, args.embedder_type, logger, args.task_name)
         elif args.student_name:
             logger.info(f"Clearing cache for student {args.student_name}...")
-            files_removed = clear_student_cache(cache_dir, args.student_name, logger)
+            files_removed = clear_student_cache(cache_dir, args.student_name, logger, args.task_name)
         elif args.model_name:
             logger.info(f"Clearing cache for model {args.model_name}...")
-            files_removed = clear_model_cache(cache_dir, args.model_name, logger)
+            files_removed = clear_model_cache(cache_dir, args.model_name, logger, args.task_name)
         else:
             print("❌ Error: Must specify --all, --embedder-type, --student-name, or --model-name")
             sys.exit(1)
