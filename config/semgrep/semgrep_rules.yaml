@@ -1,3 +1,5 @@
+ruleset: p/java
+
 rules:
   # Single Responsibility Principle (SRP) Violations
   - id: srp-large-class
@@ -58,15 +60,26 @@ rules:
 
   # Dependency Inversion Principle (DIP) Violations
   - id: dip-concrete-dependencies
-    pattern: |
-      class $CLASS {
-        ...
-        private $CONCRETE_TYPE $FIELD = new $CONCRETE_TYPE(...);
-        ...
-      }
-    message: "Direct instantiation of concrete classes may violate DIP - consider dependency injection"
-    languages: [java, csharp]
-    severity: INFO
+  pattern-either:
+    - pattern: |
+        class $CLASS {
+          ...
+          private $CONCRETE_TYPE $FIELD = new $CONCRETE_TYPE(...);
+          ...
+        }
+    - pattern: |
+        class $CLASS {
+          ...
+          $CLASS(...) {
+            ...
+            this.$FIELD = new $CONCRETE_TYPE(...);
+            ...
+          }
+          ...
+        }
+  message: "Direct instantiation of concrete classes may violate DIP - consider dependency injection"
+  languages: [java, csharp]
+  severity: INFO
 
   # Interface Segregation Principle (ISP) Violations
   - id: isp-large-interface

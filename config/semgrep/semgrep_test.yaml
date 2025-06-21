@@ -1,0 +1,23 @@
+rules:
+- id: dip-concrete-dependencies
+  pattern-either:
+    - pattern: |
+        class $CLASS {
+          ...
+          private $CONCRETE_TYPE $FIELD = new $CONCRETE_TYPE(...);
+          ...
+        }
+    - pattern: |
+        class $CLASS {
+          ...
+          $CLASS(...) {
+            ...
+            this.$FIELD = new $CONCRETE_TYPE(...);
+            ...
+          }
+          ...
+        }
+  message: "Direct instantiation of concrete classes may violate DIP - consider dependency injection"
+  languages: [java, csharp]
+  severity: INFO
+

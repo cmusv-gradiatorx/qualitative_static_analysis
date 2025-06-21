@@ -14,9 +14,9 @@
   ],
   "keep_patterns": [
   ],
-  "max_parallel_llm": 2,
-  "enable_semgrep_analysis": false,
-  "semgrep_rules_file": "config/semgrep_rules.yaml",
+  "max_parallel_llm": 1,
+  "enable_semgrep_analysis": true,
+  "semgrep_rules_file": "config/semgrep/semgrep_test.yaml",
   "semgrep_timeout": 300,
   "prompt_has_img_pdf": false,
     "submission_is": "code"

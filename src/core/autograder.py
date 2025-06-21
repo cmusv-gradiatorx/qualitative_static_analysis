@@ -12,6 +12,7 @@ import os
 import json
 import tempfile
 import shutil
+import zipfile
 import asyncio
 import concurrent.futures
 from pathlib import Path
@@ -188,19 +189,41 @@ class AutoGrader:
                 
                 # Step 3: Check for multimodal support if needed
                 attachment_files = []
-                if prompt_has_img_pdf or submission_is == 'report':
+                
+                # Scan for attachments in code submissions
+                code_attachments = []
+                if submission_is == 'code':
+                    code_attachments = self._extract_attachments_from_code_zip(zip_path, temp_dir)
+                    if code_attachments:
+                        self.logger.info(f"Found {len(code_attachments)} attachment file(s) in code submission")
+                        for attachment in code_attachments:
+                            self.logger.info(f"  - {attachment.name}")
+                
+                # Check if any multimodal processing is needed
+                needs_multimodal = (prompt_has_img_pdf or 
+                                   submission_is == 'report' or 
+                                   len(code_attachments) > 0)
+                
+                if needs_multimodal:
                     if not self.llm_provider.supports_multimodal():
                         raise Exception(f"LLM provider {self.llm_provider} does not support multimodal content (images/PDFs). Please use Gemini or OpenAI for image/PDF processing.")
                     
                     if prompt_has_img_pdf:
                         # Get attachment files from prompts directory
-                        attachment_files.extend(self.prompt_manager.get_attachment_files())
-                        self.logger.info(f"Found {len(attachment_files)} prompt attachment files")
+                        prompt_attachments = self.prompt_manager.get_attachment_files()
+                        attachment_files.extend(prompt_attachments)
+                        self.logger.info(f"Found {len(prompt_attachments)} prompt attachment files")
                     
                     if submission_is == 'report':
                         # Add report files to attachments
-                        attachment_files.extend(processing_result.get('report_files', []))
-                        self.logger.info(f"Added {len(processing_result.get('report_files', []))} report files")
+                        report_files = processing_result.get('report_files', [])
+                        attachment_files.extend(report_files)
+                        self.logger.info(f"Added {len(report_files)} report files")
+                    
+                    if submission_is == 'code' and code_attachments:
+                        # Add code submission attachments
+                        attachment_files.extend(code_attachments)
+                        self.logger.info(f"Added {len(code_attachments)} code submission attachment files")
                 
                 # Step 4: Divide rubrics for parallel processing
                 max_parallel = self.project_config.get('max_parallel_llm', 2)
@@ -573,6 +596,82 @@ class AutoGrader:
         
         self.logger.info(f"Completed processing {len(results)} assignments")
         return results
+    
+    def _extract_attachments_from_code_zip(self, zip_path: Path, temp_dir: Path) -> List[Path]:
+        """
+        Extract images and PDF files from a code submission ZIP file.
+        
+        This method scans through the ZIP file to find any images or PDFs that
+        students might have included in their code submission, as per Part 4 requirement.
+        
+        Args:
+            zip_path: Path to the ZIP file
+            temp_dir: Temporary directory for extraction
+            
+        Returns:
+            List of paths to attachment files found in the ZIP
+        """
+        attachment_files = []
+        
+        # Supported attachment file extensions
+        supported_extensions = {'.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp'}
+        
+        try:
+            # Create extraction directory for attachments
+            attachments_dir = temp_dir / "code_attachments"
+            attachments_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Extract and scan ZIP file
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                for file_info in zip_ref.infolist():
+                    # Skip directories
+                    if file_info.is_dir():
+                        continue
+                    
+                    file_path = Path(file_info.filename)
+                    file_extension = file_path.suffix.lower()
+                    
+                    # Check if it's a supported attachment type
+                    if file_extension in supported_extensions:
+                        # Extract the file
+                        try:
+                            # Create safe filename (avoid path traversal)
+                            safe_filename = file_path.name
+                            if not safe_filename:  # Handle edge cases
+                                safe_filename = f"attachment_{len(attachment_files)}{file_extension}"
+                            
+                            extracted_path = attachments_dir / safe_filename
+                            
+                            # Handle duplicate filenames
+                            counter = 1
+                            original_path = extracted_path
+                            while extracted_path.exists():
+                                stem = original_path.stem
+                                suffix = original_path.suffix
+                                extracted_path = attachments_dir / f"{stem}_{counter}{suffix}"
+                                counter += 1
+                            
+                            # Extract the file
+                            with zip_ref.open(file_info) as source, open(extracted_path, 'wb') as target:
+                                shutil.copyfileobj(source, target)
+                            
+                            attachment_files.append(extracted_path)
+                            self.logger.debug(f"Extracted attachment: {file_info.filename} -> {extracted_path.name}")
+                            
+                        except Exception as e:
+                            self.logger.warning(f"Failed to extract attachment {file_info.filename}: {str(e)}")
+                            continue
+            
+            if attachment_files:
+                self.logger.info(f"Successfully extracted {len(attachment_files)} attachment file(s) from code submission")
+            else:
+                self.logger.debug("No attachment files found in code submission")
+                
+        except Exception as e:
+            self.logger.warning(f"Failed to scan ZIP file for attachments: {str(e)}")
+            return []
+        
+        return attachment_files
     
     def _cleanup_processed_file(self, zip_path: Path) -> None:
         """
