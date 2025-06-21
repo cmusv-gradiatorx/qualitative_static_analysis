@@ -1,8 +1,8 @@
-# Gradiator - Developer Guide
+# Gradiator
 
 ## 1. Introduction
 
-Welcome to the Gradiator developer documentation. Gradiator is a sophisticated autograding application designed for qualitative analysis of graduate-level software engineering assignments. It leverages Large Language Models (LLMs) to provide nuanced, rubric-based feedback that goes beyond simple pass/fail checks.
+Gradiator is a sophisticated autograding application designed for qualitative analysis of graduate-level software engineering assignments. It leverages Large Language Models (LLMs) to provide nuanced, rubric-based feedback that goes beyond simple pass/fail checks.
 
 The system is built to be modular, configurable, and extensible, allowing it to adapt to different assignments, courses, and evaluation criteria.
 
@@ -36,29 +36,29 @@ The application follows a pipeline architecture, where a student's submission (a
 ```mermaid
 graph TD
     A[Input: Student Submission ZIP] --> B{AutoGrader Core};
-    B --> C[1. Process Submission];
+    B --> C[1 Process Submission];
     C -- Code Submission --> D[Repomix Processor];
     C -- Report Submission --> E[Report Processor];
     D --> F{Content for LLM};
     E --> F;
-    B --> G[2. Load Prompts & Rubrics];
+    B --> G[2 Load Prompts & Rubrics];
     G --> H[Prompt Manager];
     H --> I[Rubric Groups for Parallel Processing];
-    B --> J[3. Static Analysis (Optional)];
+    B --> J[3 Static Analysis];
     J --> K[Semgrep Analyzer];
-    L[4. LLM Evaluation];
-    subgraph Parallel LLM Calls
+    L[4 LLM Evaluation];
+    subgraph Parallel_LLM_Calls
         direction LR
         I --> L;
         F --> L;
     end
     L --> M[Structured Rubric Feedback];
     K --> N[Semgrep Feedback];
-    B --> O[5. Generate Output];
+    B --> O[5 Generate Output];
     M --> O;
     N --> O;
     O --> P[Output Manager];
-    subgraph Output: 3 Formats
+    subgraph Output_3_Formats
         P --> Q[Complete Markdown Report];
         P --> R[Structured JSON Report];
         P --> S[Friendly Student Summary];
