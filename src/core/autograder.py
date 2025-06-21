@@ -544,11 +544,12 @@ class AutoGrader:
         if findings:
             output += "## Detailed Findings\n\n"
             for i, finding in enumerate(findings, 1):
-                rule_id = finding.get('rule_id', 'Unknown rule')
-                message = finding.get('message', 'No message')
-                file_path = finding.get('file', 'Unknown file')
-                line = finding.get('line', 'Unknown line')
-                severity = finding.get('severity', 'Unknown')
+                # Access SemgrepFinding dataclass attributes
+                rule_id = finding.rule_id if hasattr(finding, 'rule_id') else 'Unknown rule'
+                message = finding.message if hasattr(finding, 'message') else 'No message'
+                file_path = finding.file_path if hasattr(finding, 'file_path') else 'Unknown file'
+                line = finding.line if hasattr(finding, 'line') else 'Unknown line'
+                severity = finding.severity if hasattr(finding, 'severity') else 'Unknown'
                 
                 output += f"### Finding #{i}\n"
                 output += f"- **Rule ID:** {rule_id}\n"

@@ -376,10 +376,11 @@ Analyze the static analysis findings and provide your assessment in the exact JS
         # Format findings
         formatted_findings = []
         for finding in findings:
-            rule_id = finding.get('rule_id', 'Unknown rule')
-            message = finding.get('message', 'No message')
-            file_path = finding.get('file', 'Unknown file')
-            line = finding.get('line', 'Unknown line')
+            # Access SemgrepFinding dataclass attributes directly
+            rule_id = finding.rule_id if hasattr(finding, 'rule_id') else 'Unknown rule'
+            message = finding.message if hasattr(finding, 'message') else 'No message'
+            file_path = finding.file_path if hasattr(finding, 'file_path') else 'Unknown file'
+            line = finding.line if hasattr(finding, 'line') else 'Unknown line'
             
             formatted_findings.append(f"- **{rule_id}** in {file_path}:{line}: {message}")
         

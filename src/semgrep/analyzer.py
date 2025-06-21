@@ -164,6 +164,7 @@ class SemgrepAnalyzer:
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',  # Explicitly use UTF-8 encoding
                 timeout=self.timeout,
                 check=False  # Don't raise exception on non-zero exit code
             )
