@@ -1,0 +1,14 @@
+{
+    "max_file_size": 1000000,
+    "ignore_patterns": [
+    ],
+    "keep_patterns": [
+      "client/**"
+    ],
+    "max_parallel_llm": 1,
+    "enable_semgrep_analysis": false,
+    "semgrep_rules_file": "config/semgrep_rules.yaml",
+    "semgrep_timeout": 300,
+    "prompt_has_img_pdf": false,
+    "submission_is": "code"
+} 

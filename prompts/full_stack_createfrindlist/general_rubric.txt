@@ -1,0 +1,4 @@
+- Provide a concise textual evaluation justifying your score for this criterion.
+- Assign a numerical score for *this specific criterion* based on its defined point scale and descriptive levels (e.g., Complete / Code OK, Partially Complete / Code Problematic, Insufficient).
+
+Focus *only* on the provided acceptance criterion and its specific requirements. Do not evaluate other aspects of the user story or general code quality unless they directly prevent the criterion from being met as described. Remember this is client-side only, implemented with external TypeScript scripts, and should avoid full page reloads for dynamic updates where specified. Pay attention to specific HTML attribute usage if mentioned in constraints.
